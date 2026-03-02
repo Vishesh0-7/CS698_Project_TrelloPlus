@@ -192,12 +192,26 @@ export function ChangeDetailModal({ change, open, onClose }: ChangeDetailModalPr
     if (typeof value === 'object' && value !== null) {
       return Object.entries(value)
         .filter(([key]) => key !== 'id')
-        .map(([key, val]) => (
-          <div key={key} className="mb-2">
-            <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}: </span>
-            <span className="text-gray-700">{String(val)}</span>
-          </div>
-        ));
+        .map(([key, val]) => {
+          // Handle nested objects (like assignee)
+          let displayValue = val;
+          if (typeof val === 'object' && val !== null) {
+            // If it's an object with a 'name' property, use that
+            if ('name' in val) {
+              displayValue = val.name;
+            } else {
+              // Otherwise, stringify it nicely
+              displayValue = JSON.stringify(val);
+            }
+          }
+          
+          return (
+            <div key={key} className="mb-2">
+              <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}: </span>
+              <span className="text-gray-700">{String(displayValue)}</span>
+            </div>
+          );
+        });
     }
     return <span className="text-gray-700">{String(value)}</span>;
   };
