@@ -2278,7 +2278,7 @@ graph TB
 
 **Note Storage:** Meeting notes are stored as plain TEXT (or JSONB for structured transcriptions). This flexibility allows different note formats (raw transcription, structured summary, AI-generated).
 
-**Status Transitions:** A meeting cannot transition directly from IN_PROGRESS to CANCELLED; it can only move to COMPLETED. This prevents accidental loss of meeting data.
+**Status Transitions:** A meeting may transition from `IN_PROGRESS` to `COMPLETED` or `CANCELLED`; once terminal, it cannot transition back to `IN_PROGRESS`. This preserves lifecycle integrity and prevents accidental reopen.
 
 ### Data Abstraction (MIT 6.005)
 
@@ -2321,6 +2321,34 @@ CREATE TABLE meeting_participants (
 
 CREATE INDEX idx_meeting_participants_user ON meeting_participants(user_id);
 CREATE INDEX idx_meeting_participants_meeting ON meeting_participants(meeting_id);
+
+CREATE TABLE meeting_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL,
+    note_text TEXT NOT NULL,
+    note_type VARCHAR(50) NOT NULL DEFAULT 'SUMMARY',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_notes_meeting FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id)
+);
+
+CREATE INDEX idx_meeting_notes_meeting ON meeting_notes(meeting_id);
+
+CREATE TABLE summaries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL,
+    content TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING_APPROVAL',
+    created_by UUID NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP,
+    rejection_reason TEXT,
+    CONSTRAINT fk_summaries_meeting FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id),
+    CONSTRAINT fk_summaries_user FOREIGN KEY (created_by) REFERENCES users(id),
+    CONSTRAINT valid_summary_status CHECK (status IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'))
+);
+
+CREATE INDEX idx_summaries_meeting ON summaries(meeting_id);
+CREATE INDEX idx_summaries_status ON summaries(status);
 ```
 
 ### REST API Specification
@@ -2503,9 +2531,72 @@ public interface MeetingParticipantRepository extends JpaRepository<MeetingParti
 }
 ```
 
-Given the length of this comprehensive specification document, I need to continue in the next section. Let me complete the remaining modules (6-17) and the repository/database layer.
+### Class Hierarchy Diagram
 
-This is going to be a very long document. Let me continue by creating the rest of the document with the remaining critical modules, then we can review and extend as needed.
+```mermaid
+classDiagram
+    class MeetingController {
+        -meetingService: MeetingService
+        +createMeeting(CreateMeetingRequest, SecurityClaims): ResponseEntity~MeetingDTO~
+        +getMeeting(UUID, SecurityClaims): ResponseEntity~MeetingDTO~
+        +endMeeting(UUID, EndMeetingRequest, SecurityClaims): ResponseEntity~MeetingDTO~
+        +listMeetings(SecurityClaims): ResponseEntity~List~MeetingDTO~~
+    }
+
+    class MeetingService {
+        -meetingSessionRepository: MeetingSessionRepository
+        -meetingParticipantRepository: MeetingParticipantRepository
+        +createMeeting(UUID, List~UUID~, SecurityClaims): Meeting
+        +getMeeting(UUID, SecurityClaims): Meeting
+        +endMeeting(UUID, String, SecurityClaims): Meeting
+        +addParticipant(UUID, UUID, SecurityClaims): Meeting
+        +removeParticipant(UUID, UUID, SecurityClaims): Meeting
+        +listMeetings(SecurityClaims): List~Meeting~
+        -validateProject(UUID): Project
+        -validateUser(UUID): User
+    }
+
+    class Meeting {
+        -id: UUID
+        -projectId: UUID
+        -createdBy: UUID
+        -participants: Set~UUID~
+        -status: MeetingStatus
+        -notes: String
+        -createdAt: LocalDateTime
+        -endedAt: LocalDateTime
+        +addParticipant(UUID): void
+        +removeParticipant(UUID): void
+        +endWithNotes(String): void
+        +cancel(): void
+    }
+
+    class MeetingStatus {
+        <<enumeration>>
+        IN_PROGRESS
+        COMPLETED
+        CANCELLED
+    }
+
+    class MeetingSessionRepository {
+        <<interface>>
+        +findByProjectId(UUID): List~Meeting~
+        +findByCreatedBy(UUID): List~Meeting~
+        +findByStatus(MeetingStatus): List~Meeting~
+    }
+
+    class MeetingParticipantRepository {
+        <<interface>>
+        +findByMeetingId(UUID): List~MeetingParticipant~
+        +findByUserId(UUID): List~MeetingParticipant~
+        +findByMeetingIdAndUserId(UUID, UUID): Optional~MeetingParticipant~
+    }
+
+    MeetingController --> MeetingService
+    MeetingService --> MeetingSessionRepository
+    MeetingService --> MeetingParticipantRepository
+    Meeting --> MeetingStatus
+```
 
 ---
 
@@ -2531,49 +2622,240 @@ This module does NOT provide:
 
 ### Internal Architecture
 
-SummaryService orchestrates WF2's core workflow: taking meeting notes, analyzing them with AIEngine, extracting suggested changes, creating Change records, and initiating the approval workflow. It acts as an orchestrator that coordinates between AIEngine (analysis), ChangeRepository (persistence), and ApprovalService (approval workflow).
+SummaryService coordinates four collaborating components: `MeetingGateway` (context loading), `AIEngine` (semantic extraction), `ContentStructurer` (strict parsing), and `ApprovalService` (summary approval kickoff). The module persists a `summary` aggregate and a batch of derived `changes` in a single transaction so WF3 always sees a consistent change set.
 
-### Key Methods
+**Architecture Diagram:**
 
-```java
-@Service
-public class SummaryService {
-    public Summary generateSummary(UUID meetingId, String notes, SecurityClaims claims)
-        throws MeetingNotFoundException, LLMAnalysisException;
-    
-    public List<Change> extractChangesFromSummary(Summary summary)
-        throws ContentParsingException;
-    
-    public void approveSummary(UUID summaryId, SecurityClaims claims)
-        throws SummaryNotFoundException, AccessDeniedException;
-    
-    public void rejectSummary(UUID summaryId, String reason, SecurityClaims claims)
-        throws SummaryNotFoundException, AccessDeniedException;
-}
+```mermaid
+graph TB
+    subgraph "SummaryService"
+        A["SummaryController"]
+        B["SummaryService"]
+        C["MeetingGateway"]
+        D["AIEngine"]
+        E["ContentStructurer"]
+        F["SummaryRepository"]
+        G["ChangeRepository"]
+        H["ApprovalService"]
+    end
+
+    A --> B
+    B --> C
+    B --> D
+    B --> E
+    B --> F
+    B --> G
+    B --> H
 ```
 
-### Data Storage
+### Design Justification
 
-- **summaries table**: ID, meeting_id, content, created_by, approval_status, created_at
-- **changes table**: populated by SummaryService for each suggested change
+1. **Transaction boundary around summary + changes:** prevents partial persistence where summary exists but no changes were written.
+2. **Explicit gateway dependency:** avoids tight coupling to meeting internals and supports future split to dedicated meeting microservice.
+3. **Approval kickoff inside module:** keeps WF2 ownership of summary lifecycle and prevents controller-level orchestration leakage.
 
-### REST API
+### Data Abstraction (MIT 6.005)
+
+`Summary` abstracts AI-derived meeting conclusions into a stable decision package.
+
+**Rep Invariant:**
+1. `id != null`
+2. `meetingId != null`
+3. `status in {DRAFT, PENDING_APPROVAL, APPROVED, REJECTED}`
+4. `content != null && length(content) > 0`
+5. `createdAt <= now`
+6. `approvedAt != null` iff `status == APPROVED`
+
+**Abstraction Function:**
+`AF(rep) = MeetingSummary{meetingId, narrative, extractedActionItems, extractedDecisions, extractedChanges, approvalStatus}`
+
+### Stable Storage
+
+```sql
+CREATE TABLE summaries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL,
+    content TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING_APPROVAL',
+    created_by UUID NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP,
+    rejection_reason TEXT,
+    CONSTRAINT fk_summaries_meeting FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id),
+    CONSTRAINT fk_summaries_user FOREIGN KEY (created_by) REFERENCES users(id),
+    CONSTRAINT valid_summary_status CHECK (status IN ('DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'))
+);
+
+CREATE INDEX idx_summaries_meeting ON summaries(meeting_id);
+CREATE INDEX idx_summaries_status ON summaries(status);
+```
+
+### REST API Specification
 
 #### POST /api/v1/summaries
 
-**Request:** Meeting ID and notes text  
-**Response:** Generated summary with proposed changes  
-**Authorization:** Project member can create
+**Authentication:** Required  
+**Authorization:** Meeting creator, participant, or ADMIN
+
+**Request:**
+```json
+{
+  "meetingId": "750e8400-e29b-41d4-a716-446655440000",
+  "notes": "Discussed onboarding flow redesign and API throttling changes."
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "summaryId": "a50e8400-e29b-41d4-a716-446655440000",
+  "meetingId": "750e8400-e29b-41d4-a716-446655440000",
+  "status": "PENDING_APPROVAL",
+  "changeCount": 4
+}
+```
 
 #### GET /api/v1/summaries/{id}
 
-**Response:** Summary details with all proposed changes  
+**Authentication:** Required  
 **Authorization:** Project member or ADMIN
 
-#### POST /api/v1/approvals/summary/{id}/approve
+#### POST /api/v1/summaries/{id}/approve
 
-**Request:** Approval decision  
-**Response:** Summary marked APPROVED, changes marked READY_FOR_WF3
+**Authentication:** Required  
+**Authorization:** Required approver list member or ADMIN
+
+#### POST /api/v1/summaries/{id}/reject
+
+**Authentication:** Required  
+**Authorization:** Required approver list member or ADMIN
+
+### Class Declarations
+
+```java
+package com.flowboard.summary;
+
+@RestController
+@RequestMapping("/api/v1/summaries")
+public class SummaryController {
+    public record GenerateSummaryRequest(UUID meetingId, String notes) { }
+
+    @PostMapping
+    public ResponseEntity<SummaryDTO> generateSummary(
+        @Valid @RequestBody GenerateSummaryRequest request,
+        @AuthenticationPrincipal SecurityClaims claims);
+
+    @GetMapping("/{id}")
+    public ResponseEntity<SummaryDTO> getSummary(
+        @PathVariable UUID id,
+        @AuthenticationPrincipal SecurityClaims claims);
+
+    @PostMapping("/{id}/approve")
+    public ResponseEntity<Void> approveSummary(
+        @PathVariable UUID id,
+        @AuthenticationPrincipal SecurityClaims claims);
+
+    @PostMapping("/{id}/reject")
+    public ResponseEntity<Void> rejectSummary(
+        @PathVariable UUID id,
+        @RequestBody RejectSummaryRequest request,
+        @AuthenticationPrincipal SecurityClaims claims);
+}
+
+@Service
+public class SummaryService {
+    public Summary generateSummary(UUID meetingId, String notes, SecurityClaims claims);
+    public Summary getSummary(UUID summaryId, SecurityClaims claims);
+    public List<Change> extractChangesFromSummary(Summary summary);
+    public void approveSummary(UUID summaryId, SecurityClaims claims);
+    public void rejectSummary(UUID summaryId, String reason, SecurityClaims claims);
+
+    private void validateMeetingAccess(UUID meetingId, SecurityClaims claims);
+    private void checkSummaryStateTransition(Summary summary, SummaryStatus target);
+}
+
+public class Summary {
+    private final UUID id;
+    private final UUID meetingId;
+    private final String content;
+    private SummaryStatus status;
+    private final UUID createdBy;
+    private final LocalDateTime createdAt;
+    private LocalDateTime approvedAt;
+    private String rejectionReason;
+
+    public UUID getId();
+    public UUID getMeetingId();
+    public String getContent();
+    public SummaryStatus getStatus();
+    public UUID getCreatedBy();
+    public LocalDateTime getCreatedAt();
+    public LocalDateTime getApprovedAt();
+    public String getRejectionReason();
+
+    public void markApproved(LocalDateTime at);
+    public void markRejected(String reason);
+}
+
+public enum SummaryStatus {
+    DRAFT,
+    PENDING_APPROVAL,
+    APPROVED,
+    REJECTED;
+}
+
+@Repository
+public interface SummaryRepository extends JpaRepository<Summary, UUID> {
+    List<Summary> findByMeetingId(UUID meetingId);
+    List<Summary> findByStatus(SummaryStatus status);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class SummaryController {
+        +generateSummary(GenerateSummaryRequest, SecurityClaims): ResponseEntity~SummaryDTO~
+        +getSummary(UUID, SecurityClaims): ResponseEntity~SummaryDTO~
+        +approveSummary(UUID, SecurityClaims): ResponseEntity~Void~
+        +rejectSummary(UUID, RejectSummaryRequest, SecurityClaims): ResponseEntity~Void~
+    }
+
+    class SummaryService {
+        +generateSummary(UUID, String, SecurityClaims): Summary
+        +getSummary(UUID, SecurityClaims): Summary
+        +extractChangesFromSummary(Summary): List~Change~
+        +approveSummary(UUID, SecurityClaims): void
+        +rejectSummary(UUID, String, SecurityClaims): void
+    }
+
+    class Summary {
+        -id: UUID
+        -meetingId: UUID
+        -content: String
+        -status: SummaryStatus
+        -createdBy: UUID
+    }
+
+    class SummaryStatus {
+        <<enumeration>>
+        DRAFT
+        PENDING_APPROVAL
+        APPROVED
+        REJECTED
+    }
+
+    class SummaryRepository {
+        <<interface>>
+        +findByMeetingId(UUID): List~Summary~
+        +findByStatus(SummaryStatus): List~Summary~
+    }
+
+    SummaryController --> SummaryService
+    SummaryService --> SummaryRepository
+    Summary --> SummaryStatus
+```
 
 ---
 
@@ -2595,13 +2877,91 @@ This module provides:
 
 This module does NOT provide:
 - Email notifications (delegates to NotificationService)
-- Workflow state persistence (caller handles)
+- Workflow state persistence for target business entities (summary/change records are transitioned by caller modules)
 
 ### Internal Architecture
 
-ApprovalService is a reusable approval engine that WF2 and WF3 use independently. WF2 calls it for summary approval (all meeting attendees must approve). WF3 calls it for change approval (project leaders must approve). The service uses a strategy pattern for approval rules.
+ApprovalService acts as a generic approval orchestrator that binds an `ApprovalRequest` entity to a pluggable rule strategy (`UNANIMOUS`, `QUORUM`, `CONSENSUS`) and a vote stream. It is reused in WF2 (summary approvals) and WF3 (change approvals) with different policy inputs.
 
-### Key Methods
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ApprovalController] --> B[ApprovalService]
+    B --> C[ApprovalRequestRepository]
+    B --> D[ApprovalVoteRepository]
+    B --> E[ApprovalRuleEngine]
+    E --> F[UnanimousApprovalRule]
+    E --> G[QuorumApprovalRule]
+    E --> H[ConsensusApprovalRule]
+    B --> I[AuditLogRepository]
+```
+
+### Design Justification
+
+1. **Rule strategy abstraction:** avoids hardcoding workflow-specific policy in a shared service.
+2. **Vote immutability:** every vote is append-only with unique `(requestId, voterId)`; simplifies audit and dispute resolution.
+3. **Shared service reuse:** WF2 and WF3 can diverge in policy while retaining consistent operational controls.
+
+### Data Abstraction (MIT 6.005)
+
+`ApprovalRequest` abstracts approval state as a deterministic function of votes and rule.
+
+**Rep Invariant:**
+1. `requiredApprovers` is non-empty
+2. `status in {PENDING, APPROVED, REJECTED, EXPIRED}`
+3. `deadline >= createdAt`
+4. `ruleType in {UNANIMOUS, QUORUM, CONSENSUS}`
+5. at most one vote per `(requestId, voterId)`
+
+### Stable Storage
+
+```sql
+CREATE TABLE approval_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type VARCHAR(100) NOT NULL,
+    entity_id UUID NOT NULL,
+    rule_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    required_approvers JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deadline TIMESTAMP,
+    CONSTRAINT valid_approval_rule CHECK (rule_type IN ('UNANIMOUS', 'QUORUM', 'CONSENSUS')),
+    CONSTRAINT valid_approval_status CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'))
+);
+
+CREATE TABLE approval_votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    approval_request_id UUID NOT NULL,
+    voter_id UUID NOT NULL,
+    decision VARCHAR(50) NOT NULL,
+    feedback TEXT,
+    voted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_approval_votes_request FOREIGN KEY (approval_request_id) REFERENCES approval_requests(id),
+    CONSTRAINT fk_approval_votes_voter FOREIGN KEY (voter_id) REFERENCES users(id),
+    CONSTRAINT valid_vote_decision CHECK (decision IN ('APPROVE', 'REJECT')),
+    CONSTRAINT unique_vote UNIQUE (approval_request_id, voter_id)
+);
+```
+
+### REST API Specification
+
+#### POST /api/v1/approvals/requests
+
+**Authentication:** Required  
+**Authorization:** SYSTEM, MANAGER, or ADMIN
+
+#### POST /api/v1/approvals/requests/{id}/votes
+
+**Authentication:** Required  
+**Authorization:** User must be in required approvers set
+
+#### GET /api/v1/approvals/requests/{id}
+
+**Authentication:** Required  
+**Authorization:** Request participant or ADMIN
+
+### Class Declarations
 
 ```java
 @Service
@@ -2632,10 +2992,90 @@ public class QuorumApprovalRule implements ApprovalRule; // 50% + 1
 public class ConsensusApprovalRule implements ApprovalRule; // 100%
 ```
 
-### Data Storage
+```java
+public class ApprovalRequest {
+    private final UUID id;
+    private final String entityType;
+    private final UUID entityId;
+    private final ApprovalRuleType ruleType;
+    private ApprovalStatus status;
+    private final Set<UUID> requiredApprovers;
+    private final LocalDateTime createdAt;
+    private final LocalDateTime deadline;
 
-- **approval_requests table**: ID, entity_type, entity_id, rule_type, status, created_at, deadline
-- **approval_votes table**: ID, request_id, voter_id, decision, feedback, voted_at
+    public UUID getId();
+    public String getEntityType();
+    public UUID getEntityId();
+    public ApprovalRuleType getRuleType();
+    public ApprovalStatus getStatus();
+    public Set<UUID> getRequiredApprovers();
+
+    public void markApproved();
+    public void markRejected();
+    public void markExpired();
+}
+
+public class ApprovalVote {
+    private final UUID id;
+    private final UUID approvalRequestId;
+    private final UUID voterId;
+    private final ApprovalDecision decision;
+    private final String feedback;
+    private final LocalDateTime votedAt;
+}
+
+public enum ApprovalRuleType { UNANIMOUS, QUORUM, CONSENSUS; }
+public enum ApprovalStatus { PENDING, APPROVED, REJECTED, EXPIRED; }
+public enum ApprovalDecision { APPROVE, REJECT; }
+
+@Repository
+public interface ApprovalRequestRepository extends JpaRepository<ApprovalRequest, UUID> {
+    Optional<ApprovalRequest> findByEntityTypeAndEntityId(String entityType, UUID entityId);
+    List<ApprovalRequest> findByStatus(ApprovalStatus status);
+}
+
+@Repository
+public interface ApprovalVoteRepository extends JpaRepository<ApprovalVote, UUID> {
+    List<ApprovalVote> findByApprovalRequestId(UUID requestId);
+    Optional<ApprovalVote> findByApprovalRequestIdAndVoterId(UUID requestId, UUID voterId);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ApprovalService {
+        +createApprovalRequest(ApprovalContext, ApprovalRule): ApprovalRequest
+        +recordApprovalVote(UUID, UUID, ApprovalDecision, String): void
+        +evaluateApprovalStatus(UUID): ApprovalResult
+    }
+
+    class ApprovalRule {
+        <<interface>>
+        +evaluate(List~ApprovalVote~, List~UUID~): ApprovalResult
+    }
+
+    class UnanimousApprovalRule
+    class QuorumApprovalRule
+    class ConsensusApprovalRule
+
+    class ApprovalRequest
+    class ApprovalVote
+    class ApprovalRequestRepository {
+        <<interface>>
+    }
+    class ApprovalVoteRepository {
+        <<interface>>
+    }
+
+    ApprovalService --> ApprovalRequestRepository
+    ApprovalService --> ApprovalVoteRepository
+    ApprovalService --> ApprovalRule
+    ApprovalRule <|.. UnanimousApprovalRule
+    ApprovalRule <|.. QuorumApprovalRule
+    ApprovalRule <|.. ConsensusApprovalRule
+```
 
 ---
 
@@ -2659,7 +3099,77 @@ This module does NOT provide:
 - Change application (that's ChangeApplicationService)
 - Conflict resolution (that's ConflictResolver)
 
-### Key Methods
+### Internal Architecture
+
+ChangePreviewService builds a read-model for reviewers by composing data from `ChangeRepository`, `KanbanBoardGateway`, `DiffCalculator`, `ImpactAnalyzer`, and `ConflictResolver`. It intentionally has no write path except reviewer metadata reads to remain side-effect free.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ChangePreviewController] --> B[ChangePreviewService]
+    B --> C[ChangeRepository]
+    B --> D[KanbanBoardGateway]
+    B --> E[DiffCalculator]
+    B --> F[ImpactAnalyzer]
+    B --> G[ConflictResolver]
+```
+
+### Design Justification
+
+1. **Read-only preview model:** protects production board state during review.
+2. **Separation of analysis concerns:** diff, impact, and conflict each evolve independently.
+3. **Deterministic rendering:** preview output is reproducible from persisted `current_state` and `proposed_state`.
+
+### Data Abstraction (MIT 6.005)
+
+`ChangePreview` abstracts all reviewer-relevant facts for a `Change` without exposing internal storage details.
+
+**Rep Invariant:**
+1. `changeId != null`
+2. `diff != null`
+3. `impact != null`
+4. `conflicts` list is non-null
+5. `status in {PENDING, READY_FOR_WF3, APPROVED, REJECTED, APPLIED}`
+
+### Stable Storage
+
+The module itself is stateless. Its durable inputs come from:
+1. `changes` table (`current_state`, `proposed_state`, status)
+2. board state (`boards`, `stages`, `cards`)
+3. optional reviewer annotations in `change_review_notes`
+
+```sql
+CREATE TABLE change_review_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    author_id UUID NOT NULL,
+    note TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_review_note_change FOREIGN KEY (change_id) REFERENCES changes(id),
+    CONSTRAINT fk_review_note_author FOREIGN KEY (author_id) REFERENCES users(id)
+);
+```
+
+### REST API Specification
+
+#### GET /api/v1/changes
+
+Lists pending/review-ready changes with summary impact metadata.
+
+#### GET /api/v1/changes/{id}
+
+Returns full change preview.
+
+#### GET /api/v1/changes/{id}/diff
+
+Returns normalized diff payload.
+
+#### GET /api/v1/changes/{id}/impact
+
+Returns impact and risk assessment.
+
+### Class Declarations
 
 ```java
 @Service
@@ -2677,9 +3187,54 @@ public class ChangePreviewService {
 }
 ```
 
-### Data Storage
+```java
+public class ChangePreview {
+    private final UUID changeId;
+    private final ChangeType type;
+    private final DiffView diff;
+    private final ChangeImpactAnalysis impact;
+    private final List<Conflict> conflicts;
+    private final ChangeStatus status;
 
-Changes are read from the **changes table**. Previews and analyses are computed on-the-fly (not persisted).
+    public UUID getChangeId();
+    public ChangeType getType();
+    public DiffView getDiff();
+    public ChangeImpactAnalysis getImpact();
+    public List<Conflict> getConflicts();
+    public ChangeStatus getStatus();
+}
+
+@Repository
+public interface ChangeReviewNoteRepository extends JpaRepository<ChangeReviewNote, UUID> {
+    List<ChangeReviewNote> findByChangeId(UUID changeId);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ChangePreviewService {
+        +generatePreview(UUID, SecurityClaims): ChangePreview
+        +listPendingChanges(UUID, SecurityClaims): List~ChangePreview~
+        +analyzeImpact(UUID): ChangeImpactAnalysis
+        +detectConflicts(UUID): ConflictReport
+    }
+
+    class ChangePreview
+    class DiffCalculator
+    class ImpactAnalyzer
+    class ConflictResolver
+    class ChangeRepository {
+        <<interface>>
+    }
+
+    ChangePreviewService --> ChangeRepository
+    ChangePreviewService --> DiffCalculator
+    ChangePreviewService --> ImpactAnalyzer
+    ChangePreviewService --> ConflictResolver
+    ChangePreviewService --> ChangePreview
+```
 
 ---
 
@@ -2703,7 +3258,67 @@ This module does NOT provide:
 - Rollback of applied changes (future enhancement)
 - Conflict resolution (ConflictResolver handles it first)
 
-### Key Methods
+### Internal Architecture
+
+ChangeApplicationService is a transactional executor for approved changes. It validates each candidate change against live board state, applies mutations through repositories, verifies post-conditions, and writes audit entries.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ChangeApplicationController] --> B[ChangeApplicationService]
+    B --> C[ChangeRepository]
+    B --> D[CardRepository]
+    B --> E[StageRepository]
+    B --> F[ConflictResolver]
+    B --> G[AuditLogRepository]
+    B --> H[SnapshotRepository]
+```
+
+### Design Justification
+
+1. **Single transaction for batch apply:** avoids mixed state where only subset of approved changes is applied.
+2. **Snapshot-before-write:** enables operational rollback support without reconstructing history from logs.
+3. **Post-commit invariants:** validates board ordering and referential integrity after mutation set.
+
+### Data Abstraction (MIT 6.005)
+
+`AppliedChangeSet` abstracts an atomic mutation group over board entities.
+
+**Rep Invariant:**
+1. each change status is `APPROVED` before apply
+2. each change status is `APPLIED` after apply
+3. `appliedAt` is set iff status is `APPLIED`
+4. snapshot exists for every applied change
+
+### Stable Storage
+
+```sql
+CREATE TABLE change_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    board_state JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_snapshots_change FOREIGN KEY (change_id) REFERENCES changes(id),
+    CONSTRAINT unique_snapshot_change UNIQUE (change_id)
+);
+```
+
+### REST API Specification
+
+#### POST /api/v1/changes/{id}/apply
+
+Applies one approved change.
+
+#### POST /api/v1/changes/apply-batch
+
+Applies multiple approved changes atomically.
+
+#### GET /api/v1/changes/{id}/verify
+
+Returns post-application verification outcome.
+
+### Class Declarations
 
 ```java
 @Service
@@ -2723,11 +3338,50 @@ public class ChangeApplicationService {
 }
 ```
 
-### Data Storage
+```java
+public class ChangeSnapshot {
+    private final UUID id;
+    private final UUID changeId;
+    private final JsonNode boardState;
+    private final LocalDateTime createdAt;
+}
 
-- Updates **cards table** based on proposed_state
-- Updates **changes table** to mark as APPLIED
-- Writes to **audit_log** with change details
+@Repository
+public interface ChangeSnapshotRepository extends JpaRepository<ChangeSnapshot, UUID> {
+    Optional<ChangeSnapshot> findByChangeId(UUID changeId);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ChangeApplicationService {
+        +applyChange(UUID, SecurityClaims): void
+        +applyChanges(List~UUID~, SecurityClaims): void
+        -validateChange(Change): void
+        -verifyBoardIntegrity(UUID): void
+    }
+
+    class ChangeSnapshot
+    class ChangeRepository {
+        <<interface>>
+    }
+    class CardRepository {
+        <<interface>>
+    }
+    class StageRepository {
+        <<interface>>
+    }
+    class ChangeSnapshotRepository {
+        <<interface>>
+    }
+
+    ChangeApplicationService --> ChangeRepository
+    ChangeApplicationService --> CardRepository
+    ChangeApplicationService --> StageRepository
+    ChangeApplicationService --> ChangeSnapshotRepository
+```
 
 ---
 
@@ -2745,7 +3399,63 @@ public class ChangeApplicationService {
 - Constrains output format to JSON with specific schema
 - Handles token counting for prompt size
 
-### Key Methods
+This module does NOT provide:
+- Direct LLM invocation (delegated to `LLMClient`)
+- Domain object parsing (delegated to `ContentStructurer`)
+
+### Internal Architecture
+
+PromptBuilder composes prompts from reusable fragments: system directives, domain context, constraints, output schema, and few-shot examples. Templates are versioned to allow safe iterative prompt improvements.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[PromptBuilder] --> B[PromptTemplateRepository]
+    A --> C[SchemaRegistry]
+    A --> D[ExampleLibrary]
+```
+
+### Design Justification
+
+1. **Template versioning:** supports reproducibility and safe rollback when prompt changes regress output quality.
+2. **Schema-first prompting:** increases parse success and reduces malformed outputs.
+3. **Few-shot isolation:** examples can be updated independently from control instructions.
+
+### Data Abstraction (MIT 6.005)
+
+`PromptDefinition` abstracts prompt construction input into a deterministic string output.
+
+**Rep Invariant:**
+1. `templateId` exists
+2. `schemaName` exists and resolves
+3. output prompt length is below configured max tokens
+
+### Stable Storage
+
+Prompt templates and schema snippets are persisted to avoid runtime drift across deployments.
+
+```sql
+CREATE TABLE prompt_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    version INT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    user_prompt_template TEXT NOT NULL,
+    schema_name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_prompt_template UNIQUE (name, version)
+);
+```
+
+### REST API Specification
+
+No external public REST API. Internal callers use Spring dependency injection.
+
+Optional internal observability endpoint:
+- `GET /api/v1/internal/prompts/{name}/latest`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2759,6 +3469,30 @@ public class PromptBuilder {
     private String buildSystemMessage();
     private int estimateTokenCount(String prompt);
 }
+```
+
+```java
+@Repository
+public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, UUID> {
+    Optional<PromptTemplate> findTopByNameOrderByVersionDesc(String name);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class PromptBuilder {
+        +buildProjectAnalysisPrompt(String): String
+        +buildSummaryAnalysisPrompt(String, BoardContext): String
+        +buildChangeExtractionPrompt(String): String
+    }
+
+    class PromptTemplateRepository {
+        <<interface>>
+    }
+
+    PromptBuilder --> PromptTemplateRepository
 ```
 
 ---
@@ -2777,7 +3511,47 @@ public class PromptBuilder {
 - Provides detailed error messages for validation failures
 - Transforms raw LLM output to application domain model
 
-### Key Methods
+This module does NOT provide:
+- Prompt construction
+- Remote API communication
+
+### Internal Architecture
+
+ContentStructurer parses response payloads into typed domain objects using strict schema validation. It separates parsing (`JsonNode` traversal) from business validation (domain constraints) to keep error handling explicit.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ContentStructurer] --> B[JsonParser]
+    A --> C[SchemaValidator]
+    A --> D[DomainFactory]
+```
+
+### Design Justification
+
+1. **Schema validation before mapping:** avoids partial object creation from malformed payloads.
+2. **Typed factory mapping:** centralizes conversion logic and reduces parser duplication across workflows.
+3. **Detailed parse exceptions:** improves debugging and prompt iteration speed.
+
+### Data Abstraction (MIT 6.005)
+
+`ParsedAnalysis` abstracts structurally valid AI output into domain-safe values.
+
+**Rep Invariant:**
+1. all required schema fields are present
+2. enum fields map to valid domain enums
+3. list fields are non-null and bounded
+
+### Stable Storage
+
+No module-owned persistent state. Durable artifacts are persisted by caller services (`SummaryService`, `BoardGenerator`) into `summaries`, `changes`, `boards`, `cards`.
+
+### REST API Specification
+
+No public REST API; module is internal.
+
+### Class Declarations
 
 ```java
 @Component
@@ -2799,6 +3573,23 @@ public class ContentStructurer {
 }
 ```
 
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ContentStructurer {
+        +parseProjectAnalysis(String): BoardTemplate
+        +parseSummaryAnalysis(String): SummaryAnalysis
+        +parseChanges(String, UUID): List~Change~
+    }
+
+    class SchemaValidationException
+    class ContentParsingException
+
+    ContentStructurer --> SchemaValidationException
+    ContentStructurer --> ContentParsingException
+```
+
 ---
 
 ## Module 12: DiffCalculator
@@ -2815,7 +3606,47 @@ public class ContentStructurer {
 - Supports nested object diffs
 - Provides human-readable summaries
 
-### Key Methods
+This module does NOT provide:
+- Change persistence
+- Approval decisions
+
+### Internal Architecture
+
+DiffCalculator normalizes input objects into canonical JSON trees and computes path-based differences (`added`, `removed`, `modified`). It exposes both machine-readable and UI-friendly summaries.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[DiffCalculator] --> B[Canonicalizer]
+    A --> C[JsonTreeComparator]
+    A --> D[DiffSummaryFormatter]
+```
+
+### Design Justification
+
+1. **Canonicalization first:** avoids noisy diffs caused by key ordering.
+2. **Path-oriented diff format:** easy for UI highlighting and API clients.
+3. **Deterministic output:** repeatable diffs for audit and regression tests.
+
+### Data Abstraction (MIT 6.005)
+
+`FieldDiff` abstracts object change as `{added, removed, modified}` path sets.
+
+**Rep Invariant:**
+1. a field path cannot exist in more than one bucket
+2. `modified[path]` always has both old and new value
+
+### Stable Storage
+
+No persistent storage owned by module. Diff results may be cached by caller in Redis for repeated preview requests.
+
+### REST API Specification
+
+Exposed via ChangePreview API:
+- `GET /api/v1/changes/{id}/diff`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2828,6 +3659,35 @@ public class DiffCalculator {
     
     private boolean valuesEqual(Object v1, Object v2);
 }
+```
+
+```java
+public class FieldDiff {
+    private final Map<String, Object> added;
+    private final Map<String, Object> removed;
+    private final Map<String, ValueChange> modified;
+
+    public Map<String, Object> getAdded();
+    public Map<String, Object> getRemoved();
+    public Map<String, ValueChange> getModified();
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class DiffCalculator {
+        +computeDiff(Object, Object): FieldDiff
+        +generateDiffSummary(Change): String
+        +getHighlights(FieldDiff): List~ChangeHighlight~
+    }
+
+    class FieldDiff
+    class ChangeHighlight
+
+    DiffCalculator --> FieldDiff
+    DiffCalculator --> ChangeHighlight
 ```
 
 ---
@@ -2846,7 +3706,58 @@ public class DiffCalculator {
 - Identifies related changes
 - Predicts cascading effects
 
-### Key Methods
+This module does NOT provide:
+- Approval workflow
+- Change application
+
+### Internal Architecture
+
+ImpactAnalyzer reads board topology and change intent, then computes affected entities and risk metrics. It aggregates structural impact (cards/stages), process impact (owners/watchers), and operational risk (conflicts, complexity score).
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ImpactAnalyzer] --> B[KanbanBoardGateway]
+    A --> C[ChangeRepository]
+    A --> D[RiskModel]
+    A --> E[DependencyGraphBuilder]
+```
+
+### Design Justification
+
+1. **Centralized risk model:** keeps risk scoring consistent across UI and automation.
+2. **Dependency graph evaluation:** handles cascade effects for linked cards.
+3. **Side-effect free analysis:** safe to run repeatedly during review.
+
+### Data Abstraction (MIT 6.005)
+
+`ImpactSummary` abstracts a change into scope, risk, and effort outputs.
+
+**Rep Invariant:**
+1. `riskLevel in {LOW, MEDIUM, HIGH, CRITICAL}`
+2. `effortPoints >= 0`
+3. `affectedCards` and `affectedStages` are deduplicated
+
+### Stable Storage
+
+Module is computation-only. Input state is stable in `changes`, `cards`, `stages`, and `project_members` tables. Optional cached results can be persisted in `change_impact_cache`.
+
+```sql
+CREATE TABLE change_impact_cache (
+    change_id UUID PRIMARY KEY,
+    impact_payload JSONB NOT NULL,
+    generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_impact_cache_change FOREIGN KEY (change_id) REFERENCES changes(id)
+);
+```
+
+### REST API Specification
+
+Exposed via preview endpoint:
+- `GET /api/v1/changes/{id}/impact`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2860,6 +3771,41 @@ public class ImpactAnalyzer {
     
     private int estimateEffort(Change change);
 }
+```
+
+```java
+public class ImpactSummary {
+    private final List<UUID> affectedCards;
+    private final List<UUID> affectedStages;
+    private final RiskLevel riskLevel;
+    private final int effortPoints;
+
+    public List<UUID> getAffectedCards();
+    public List<UUID> getAffectedStages();
+    public RiskLevel getRiskLevel();
+    public int getEffortPoints();
+}
+
+public enum RiskLevel { LOW, MEDIUM, HIGH, CRITICAL; }
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ImpactAnalyzer {
+        +analyzeChange(Change): ImpactSummary
+        +assessRisk(Change): RiskLevel
+        +findRelatedCards(Change): List~UUID~
+    }
+
+    class ImpactSummary
+    class RiskLevel {
+        <<enumeration>>
+    }
+
+    ImpactAnalyzer --> ImpactSummary
+    ImpactSummary --> RiskLevel
 ```
 
 ---
@@ -2878,7 +3824,59 @@ public class ImpactAnalyzer {
 - Prevents invalid state transitions
 - Validates board constraints before applying changes
 
-### Key Methods
+This module does NOT provide:
+- Persistence of approved change decisions
+- User notifications
+
+### Internal Architecture
+
+ConflictResolver compares a candidate change set against live board state and other pending changes. It emits conflict descriptors with severity and candidate resolutions.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[ConflictResolver] --> B[ChangeRepository]
+    A --> C[KanbanBoardGateway]
+    A --> D[ConstraintCatalog]
+    A --> E[ResolutionHeuristics]
+```
+
+### Design Justification
+
+1. **Constraint catalog:** makes conflict rules explicit and testable.
+2. **Separation from application service:** keeps decisioning independent from mutation path.
+3. **Resolution suggestions:** reduces reviewer fatigue and supports faster triage.
+
+### Data Abstraction (MIT 6.005)
+
+`ConflictReport` abstracts conflict detection output as classified conflicts + fixes.
+
+**Rep Invariant:**
+1. every conflict has non-empty `code`, `message`, and `severity`
+2. `canApply == false` if any blocking conflict exists
+
+### Stable Storage
+
+No required storage for operation. Optional persistence for diagnostics:
+
+```sql
+CREATE TABLE conflict_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    payload JSONB NOT NULL,
+    generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_conflict_change FOREIGN KEY (change_id) REFERENCES changes(id)
+);
+```
+
+### REST API Specification
+
+Exposed as part of preview details and internal troubleshooting endpoints:
+- `GET /api/v1/changes/{id}` includes `conflicts`
+- `GET /api/v1/internal/changes/{id}/conflicts`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2890,6 +3888,43 @@ public class ConflictResolver {
     
     public List<ConflictResolution> suggestResolutions(Conflict conflict);
 }
+```
+
+```java
+public class ConflictReport {
+    private final UUID changeId;
+    private final boolean canApply;
+    private final List<Conflict> conflicts;
+}
+
+public class Conflict {
+    private final String code;
+    private final String message;
+    private final ConflictSeverity severity;
+}
+
+public enum ConflictSeverity { INFO, WARNING, BLOCKING; }
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class ConflictResolver {
+        +detectConflicts(Change, Board): ConflictReport
+        +canApplyChange(Change, Board): boolean
+        +suggestResolutions(Conflict): List~ConflictResolution~
+    }
+
+    class ConflictReport
+    class Conflict
+    class ConflictSeverity {
+        <<enumeration>>
+    }
+
+    ConflictResolver --> ConflictReport
+    ConflictReport --> Conflict
+    Conflict --> ConflictSeverity
 ```
 
 ---
@@ -2909,7 +3944,69 @@ public class ConflictResolver {
 - Manages API authentication
 - Tracks LLM usage (tokens, costs)
 
-### Key Methods
+This module does NOT provide:
+- Prompt engineering logic
+- Domain object interpretation
+
+### Internal Architecture
+
+LLMClient encapsulates provider-specific adapters behind a uniform call contract and resilience policies (timeout, retries, circuit breaker). Requests are tagged with trace IDs for observability and cost attribution.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[AIEngine] --> B[LLMClient]
+    B --> C[OpenAIAdapter]
+    B --> D[AnthropicAdapter]
+    B --> E[RetryPolicy]
+    B --> F[CircuitBreaker]
+    B --> G[UsageLogRepository]
+```
+
+### Design Justification
+
+1. **Adapter split by provider:** isolates API differences and eases provider swap.
+2. **Built-in fallback contract:** improves availability for user-facing flows.
+3. **Persistent usage logging:** supports cost governance and anomaly detection.
+
+### Data Abstraction (MIT 6.005)
+
+`LLMResponse` abstracts provider output into normalized content + usage metrics.
+
+**Rep Invariant:**
+1. `content != null`
+2. `provider in {openai, anthropic}`
+3. `inputTokens >= 0 && outputTokens >= 0`
+4. `durationMs >= 0`
+
+### Stable Storage
+
+```sql
+CREATE TABLE llm_usage_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider VARCHAR(50) NOT NULL,
+    operation VARCHAR(100) NOT NULL,
+    request_hash VARCHAR(128) NOT NULL,
+    input_tokens INT NOT NULL,
+    output_tokens INT NOT NULL,
+    duration_ms BIGINT NOT NULL,
+    success BOOLEAN NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_llm_usage_provider_time ON llm_usage_logs(provider, created_at DESC);
+```
+
+### REST API Specification
+
+No direct external REST API.
+
+Internal-only diagnostics:
+- `GET /api/v1/internal/llm/usage?from=...&to=...`
+- `GET /api/v1/internal/llm/health`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2922,6 +4019,49 @@ public class LLMClient {
     private void handleTimeout(LLMException error);
     private String parseJsonContent(LLMResponse response);
 }
+```
+
+```java
+public class LLMResponse {
+    private final String content;
+    private final int inputTokens;
+    private final int outputTokens;
+    private final String provider;
+    private final long durationMs;
+
+    public String getContent();
+    public int getInputTokens();
+    public int getOutputTokens();
+    public String getProvider();
+    public long getDurationMs();
+}
+
+@Repository
+public interface LLMUsageLogRepository extends JpaRepository<LLMUsageLog, UUID> {
+    List<LLMUsageLog> findByProviderAndCreatedAtBetween(String provider, LocalDateTime from, LocalDateTime to);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class LLMClient {
+        +callOpenAI(String): LLMResponse
+        +callAnthropic(String): LLMResponse
+    }
+
+    class OpenAIAdapter
+    class AnthropicAdapter
+    class LLMResponse
+    class LLMUsageLogRepository {
+        <<interface>>
+    }
+
+    LLMClient --> OpenAIAdapter
+    LLMClient --> AnthropicAdapter
+    LLMClient --> LLMUsageLogRepository
+    LLMClient --> LLMResponse
 ```
 
 ### Configuration
@@ -2947,7 +4087,51 @@ public class LLMClient {
 - Ensures referential integrity between cards/stages
 - Provides optimized queries for common board operations
 
-### Key Methods
+This module does NOT provide:
+- Board mutation business rules (owned by board/change services)
+- Approval policies
+
+### Internal Architecture
+
+KanbanBoardGateway is an anti-corruption layer over board persistence. It centralizes canonical board loads, consistency checks, and cross-table lookup helpers consumed by WF2/WF3 services.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[KanbanBoardGateway] --> B[BoardRepository]
+    A --> C[StageRepository]
+    A --> D[CardRepository]
+    A --> E[BoardConstraintValidator]
+```
+
+### Design Justification
+
+1. **Single board-read abstraction:** avoids duplicate query composition in multiple services.
+2. **Constraint checks at gateway edge:** catches data drift early.
+3. **Gateway boundary:** supports future move to separate board service with minimal caller change.
+
+### Data Abstraction (MIT 6.005)
+
+`BoardSnapshot` abstracts relational board state into an immutable aggregate view.
+
+**Rep Invariant:**
+1. every stage references the same board
+2. every card references an existing stage
+3. stage positions are unique per board
+
+### Stable Storage
+
+Reads durable state from `boards`, `stages`, and `cards`; no module-owned write storage.
+
+### REST API Specification
+
+No public REST API. Internal callers use service injection.
+
+Internal-only endpoint (optional):
+- `GET /api/v1/internal/boards/{id}/snapshot`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2961,6 +4145,45 @@ public class KanbanBoardGateway {
     public boolean stageExists(UUID boardId, UUID stageId);
     public boolean cardExists(UUID cardId);
 }
+```
+
+```java
+public class BoardSnapshot {
+    private final Board board;
+    private final List<Stage> stages;
+    private final List<Card> cards;
+
+    public Board getBoard();
+    public List<Stage> getStages();
+    public List<Card> getCards();
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class KanbanBoardGateway {
+        +loadBoard(UUID): Board
+        +loadCardsByStage(UUID): List~Card~
+        +validateBoardStructure(Board): void
+        +stageExists(UUID, UUID): boolean
+        +cardExists(UUID): boolean
+    }
+
+    class BoardRepository {
+        <<interface>>
+    }
+    class StageRepository {
+        <<interface>>
+    }
+    class CardRepository {
+        <<interface>>
+    }
+
+    KanbanBoardGateway --> BoardRepository
+    KanbanBoardGateway --> StageRepository
+    KanbanBoardGateway --> CardRepository
 ```
 
 ---
@@ -2978,7 +4201,63 @@ public class KanbanBoardGateway {
 - Retrieves meeting notes/transcription
 - Provides participant list for approval workflows
 
-### Key Methods
+This module does NOT provide:
+- Meeting lifecycle mutations
+- Summary generation
+
+### Internal Architecture
+
+MeetingGateway encapsulates meeting read-model lookups and validation rules required by WF2 and WF3 services. It shields callers from meeting schema shape and participant join logic.
+
+**Architecture Diagram:**
+
+```mermaid
+graph TB
+    A[MeetingGateway] --> B[MeetingSessionRepository]
+    A --> C[MeetingParticipantRepository]
+    A --> D[MeetingNoteRepository]
+    A --> E[MeetingStateValidator]
+```
+
+### Design Justification
+
+1. **Gateway extraction:** prevents repeated join/query logic in SummaryService and ApprovalService.
+2. **Uniform state validation:** ensures consistent behavior across all callers.
+3. **Schema isolation:** allows meeting persistence refactors without breaking downstream services.
+
+### Data Abstraction (MIT 6.005)
+
+`MeetingContext` abstracts all meeting facts needed by consumers (`participants`, `notes`, `status`, `projectId`).
+
+**Rep Invariant:**
+1. `meetingId != null`
+2. `projectId != null`
+3. `participants` is non-null
+4. if status is `COMPLETED`, notes may be non-empty and immutable
+
+### Stable Storage
+
+Reads durable records from `meeting_sessions`, `meeting_participants`, and `meeting_notes`.
+
+```sql
+CREATE TABLE meeting_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id UUID NOT NULL,
+    note_text TEXT NOT NULL,
+    note_type VARCHAR(50) NOT NULL DEFAULT 'SUMMARY',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_notes_meeting FOREIGN KEY (meeting_id) REFERENCES meeting_sessions(id)
+);
+```
+
+### REST API Specification
+
+No public REST API. Internal callers use dependency injection.
+
+Internal-only endpoint (optional):
+- `GET /api/v1/internal/meetings/{id}/context`
+
+### Class Declarations
 
 ```java
 @Component
@@ -2991,6 +4270,53 @@ public class MeetingGateway {
     
     public void validateMeetingState(UUID meetingId) throws InvalidMeetingStateException;
 }
+```
+
+```java
+public class MeetingContext {
+    private final UUID meetingId;
+    private final UUID projectId;
+    private final List<UUID> participants;
+    private final String notes;
+    private final MeetingStatus status;
+
+    public UUID getMeetingId();
+    public UUID getProjectId();
+    public List<UUID> getParticipants();
+    public String getNotes();
+    public MeetingStatus getStatus();
+}
+
+@Repository
+public interface MeetingNoteRepository extends JpaRepository<MeetingNote, UUID> {
+    List<MeetingNote> findByMeetingId(UUID meetingId);
+}
+```
+
+### Class Hierarchy Diagram
+
+```mermaid
+classDiagram
+    class MeetingGateway {
+        +loadMeeting(UUID): Meeting
+        +getMeetingParticipants(UUID): List~User~
+        +getMeetingNotes(UUID): String
+        +validateMeetingState(UUID): void
+    }
+
+    class MeetingSessionRepository {
+        <<interface>>
+    }
+    class MeetingParticipantRepository {
+        <<interface>>
+    }
+    class MeetingNoteRepository {
+        <<interface>>
+    }
+
+    MeetingGateway --> MeetingSessionRepository
+    MeetingGateway --> MeetingParticipantRepository
+    MeetingGateway --> MeetingNoteRepository
 ```
 
 ---
@@ -3088,6 +4414,25 @@ public interface MeetingParticipantRepository extends JpaRepository<MeetingParti
 }
 ```
 
+### MeetingNoteRepository
+
+```java
+@Repository
+public interface MeetingNoteRepository extends JpaRepository<MeetingNote, UUID> {
+    List<MeetingNote> findByMeetingId(UUID meetingId);
+}
+```
+
+### SummaryRepository
+
+```java
+@Repository
+public interface SummaryRepository extends JpaRepository<Summary, UUID> {
+    List<Summary> findByMeetingId(UUID meetingId);
+    List<Summary> findByStatus(SummaryStatus status);
+}
+```
+
 ### ChangeRepository
 
 ```java
@@ -3119,6 +4464,42 @@ public interface ApprovalRequestRepository extends JpaRepository<ApprovalRequest
 public interface ApprovalVoteRepository extends JpaRepository<ApprovalVote, UUID> {
     List<ApprovalVote> findByApprovalRequestId(UUID requestId);
     Optional<ApprovalVote> findByApprovalRequestIdAndVoterId(UUID requestId, UUID voterId);
+}
+```
+
+### ChangeReviewNoteRepository
+
+```java
+@Repository
+public interface ChangeReviewNoteRepository extends JpaRepository<ChangeReviewNote, UUID> {
+    List<ChangeReviewNote> findByChangeId(UUID changeId);
+}
+```
+
+### ChangeSnapshotRepository
+
+```java
+@Repository
+public interface ChangeSnapshotRepository extends JpaRepository<ChangeSnapshot, UUID> {
+    Optional<ChangeSnapshot> findByChangeId(UUID changeId);
+}
+```
+
+### PromptTemplateRepository
+
+```java
+@Repository
+public interface PromptTemplateRepository extends JpaRepository<PromptTemplate, UUID> {
+    Optional<PromptTemplate> findTopByNameOrderByVersionDesc(String name);
+}
+```
+
+### LLMUsageLogRepository
+
+```java
+@Repository
+public interface LLMUsageLogRepository extends JpaRepository<LLMUsageLog, UUID> {
+    List<LLMUsageLog> findByProviderAndCreatedAtBetween(String provider, LocalDateTime from, LocalDateTime to);
 }
 ```
 
@@ -3303,12 +4684,51 @@ CREATE TABLE changes (
 CREATE INDEX idx_changes_meeting ON changes(meeting_id);
 CREATE INDEX idx_changes_status ON changes(status);
 
+CREATE TABLE change_review_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    author_id UUID NOT NULL,
+    note TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_review_note_change FOREIGN KEY (change_id) REFERENCES changes(id),
+    CONSTRAINT fk_review_note_author FOREIGN KEY (author_id) REFERENCES users(id)
+);
+
+CREATE INDEX idx_change_review_notes_change ON change_review_notes(change_id);
+
+CREATE TABLE change_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    board_state JSONB NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_snapshots_change FOREIGN KEY (change_id) REFERENCES changes(id),
+    CONSTRAINT unique_snapshot_change UNIQUE (change_id)
+);
+
+CREATE TABLE change_impact_cache (
+    change_id UUID PRIMARY KEY,
+    impact_payload JSONB NOT NULL,
+    generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_impact_cache_change FOREIGN KEY (change_id) REFERENCES changes(id)
+);
+
+CREATE TABLE conflict_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    change_id UUID NOT NULL,
+    payload JSONB NOT NULL,
+    generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_conflict_change FOREIGN KEY (change_id) REFERENCES changes(id)
+);
+
+CREATE INDEX idx_conflict_reports_change ON conflict_reports(change_id);
+
 CREATE TABLE approval_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type VARCHAR(100) NOT NULL,
     entity_id UUID NOT NULL,
     rule_type VARCHAR(50) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    required_approvers JSONB NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deadline TIMESTAMP,
     CONSTRAINT valid_status CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED')),
@@ -3333,6 +4753,33 @@ CREATE TABLE approval_votes (
 
 CREATE INDEX idx_approval_votes_request ON approval_votes(approval_request_id);
 CREATE INDEX idx_approval_votes_voter ON approval_votes(voter_id);
+
+-- ============ Prompting & AI Operations ============
+
+CREATE TABLE prompt_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    version INT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    user_prompt_template TEXT NOT NULL,
+    schema_name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_prompt_template UNIQUE (name, version)
+);
+
+CREATE TABLE llm_usage_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider VARCHAR(50) NOT NULL,
+    operation VARCHAR(100) NOT NULL,
+    request_hash VARCHAR(128) NOT NULL,
+    input_tokens INT NOT NULL,
+    output_tokens INT NOT NULL,
+    duration_ms BIGINT NOT NULL,
+    success BOOLEAN NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_llm_usage_provider_time ON llm_usage_logs(provider, created_at DESC);
 
 -- ============ Audit Log ============
 
@@ -3412,6 +4859,8 @@ UserAuthenticationService (base)
 ---
 
 ## API Response Format Standards
+
+Note: Some module-level endpoint examples above are concise payload illustrations. Production responses SHOULD follow this envelope format for consistency.
 
 All API responses follow this standard envelope:
 
@@ -3818,7 +5267,7 @@ meetingId ≠ null AND exists in meetings table
 changeType ∈ {MOVE_CARD, CREATE_CARD, UPDATE_CARD, DELETE_CARD}
 currentState ≠ null AND valid ChangeState object
 proposedState ≠ null AND valid ChangeState object
-status ∈ {PENDING, APPROVED, REJECTED, APPLIED}
+status ∈ {PENDING, READY_FOR_WF3, APPROVED, REJECTED, APPLIED}
 createdAt ≤ LocalDateTime.now()
 appliedAt = null OR (appliedAt ≥ createdAt AND status = APPLIED)
 
@@ -3831,30 +5280,31 @@ Enforced by:
 
 ```
 id ≠ null (UUID)
-summaryId ≠ null AND exists in meeting_summaries table
-approvalThreshold ∈ (0, 1] (percentage as decimal)
-status ∈ {PENDING, APPROVED, REJECTED}
+entityType ≠ null AND entityId ≠ null
+entityId exists in referenced table implied by entityType
+ruleType ∈ {UNANIMOUS, QUORUM, CONSENSUS}
+status ∈ {PENDING, APPROVED, REJECTED, EXPIRED}
 deadline ≥ createdAt
 createdAt ≤ LocalDateTime.now()
 
 Enforced by:
-- SQL: CONSTRAINT fk_approval_requests_summary
+- SQL: CONSTRAINT valid_rule, CONSTRAINT valid_status
 - Java: ApprovalService constructor validation, checkRep()
 - Critical mutation: Cannot reopen closed approval requests
 ```
 
-### Approval Response Invariant
+### ApprovalVote Invariant
 
 ```
 id ≠ null (UUID)
 requestId ≠ null AND exists in approval_requests table
 approverId ≠ null AND exists in users table
-approved ∈ {true, false}
-respondedAt ≤ LocalDateTime.now()
+decision ∈ {APPROVE, REJECT}
+votedAt ≤ LocalDateTime.now()
 Uniqueness: No duplicate (requestId, approverId) pairs
 
 Enforced by:
-- SQL: CONSTRAINT fk_approval_responses_request, UNIQUE(request_id, approver_id)
+- SQL: CONSTRAINT fk_approval_votes_request, UNIQUE(approval_request_id, voter_id)
 - Java: ApprovalService constructor validation, checkRep()
 - Critical constraint: Cannot vote after deadline (checked in service)
 ```
