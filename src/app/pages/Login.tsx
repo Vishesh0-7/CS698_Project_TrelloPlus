@@ -8,6 +8,7 @@ import { apiService } from '../services/api';
 import { useProjectStore } from '../store/projectStore';
 
 export function Login() {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const navigate = useNavigate();
   const updateUser = useProjectStore((s) => s.updateUser);
   const [email, setEmail] = useState('');
@@ -19,6 +20,11 @@ export function Login() {
     
     if (!email.trim() || !password.trim()) {
       toast.error('Please enter both email and password');
+      return;
+    }
+
+    if (!emailRegex.test(email.trim())) {
+      toast.error('Please enter a valid email address');
       return;
     }
 

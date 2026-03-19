@@ -66,6 +66,12 @@ interface ProjectResponse {
     priority: string;
     column_id: string;
     created_at: string;
+    assignee?: {
+      id: string;
+      email?: string;
+      username?: string;
+      fullName?: string;
+    };
   }>;
   created_at: string;
 }
@@ -74,6 +80,7 @@ interface CardRequest {
   title: string;
   description: string;
   priority: string;
+  assignee_id?: string | null;
 }
 
 interface MoveCardRequest {
@@ -134,6 +141,14 @@ const parseApiErrorMessage = async (response: Response, fallback: string): Promi
     return parseErrorMessage(response, 'You do not have permission to perform this action.');
   }
 
+  if (response.status === 409) {
+    return parseErrorMessage(response, 'This action conflicts with existing data.');
+  }
+
+  if (response.status === 429) {
+    return parseErrorMessage(response, 'Too many requests. Please wait and try again.');
+  }
+
   return parseErrorMessage(response, fallback);
 };
 
@@ -172,6 +187,12 @@ export const mapCardResponseToTask = (task: ProjectResponse['tasks'][number]): B
   id: task.id,
   title: task.title,
   description: task.description,
+  assignee: task.assignee
+    ? {
+        id: task.assignee.id,
+        name: task.assignee.fullName || task.assignee.username || task.assignee.email || 'Unknown User',
+      }
+    : undefined,
   priority: task.priority as BoardTask['priority'],
   columnId: task.column_id,
   createdDate: task.created_at,
@@ -225,6 +246,17 @@ export const apiService = {
     }
 
     return response.json();
+  },
+
+  async logout(): Promise<void> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok && response.status !== 401) {
+      throw new Error(await parseApiErrorMessage(response, 'Logout failed'));
+    }
   },
 
   // Project endpoints

@@ -23,4 +23,8 @@ public interface ProjectRepository extends JpaRepository<Project, UUID> {
         "WHERE (p.owner_id = :userId OR pm.user_id = :userId) " +
         "AND (p.is_deletion_marked = false OR p.is_deletion_marked IS NULL)", nativeQuery = true)
     List<Project> findActiveProjectsForUserId(@Param("userId") UUID userId);
+
+    @Query("SELECT p FROM Project p WHERE p.owner = :owner AND LOWER(p.name) = LOWER(:name) " +
+        "AND (p.isDeletionMarked = false OR p.isDeletionMarked IS NULL)")
+    List<Project> findActiveByOwnerAndNameIgnoreCase(@Param("owner") User owner, @Param("name") String name);
 }

@@ -2,21 +2,38 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiService } from '../services/api';
 
 export function Logout() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Clear authentication data
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('user');
-    
-    const timer = setTimeout(() => {
-      toast.success('You have been logged out successfully');
-      navigate('/login');
-    }, 1500);
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    return () => clearTimeout(timer);
+    const runLogout = async () => {
+      try {
+        await apiService.logout();
+      } catch {
+        // Clearing local session remains safe even if server logout fails.
+      } finally {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+
+        timer = setTimeout(() => {
+          toast.success('You have been logged out successfully');
+          navigate('/login');
+        }, 1500);
+      }
+    };
+
+    void runLogout();
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+
   }, [navigate]);
 
   return (

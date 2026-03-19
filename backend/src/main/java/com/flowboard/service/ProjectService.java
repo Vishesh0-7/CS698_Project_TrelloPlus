@@ -26,6 +26,12 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ProjectService {
+    private static final int PROJECT_NAME_MAX = 255;
+    private static final int PROJECT_DESCRIPTION_MAX = 5000;
+    private static final int STAGE_TITLE_MAX = 100;
+    private static final int CARD_TITLE_MAX = 255;
+    private static final int CARD_DESCRIPTION_MAX = 5000;
+
     private final ProjectRepository projectRepository;
     private final BoardRepository boardRepository;
     private final StageRepository stageRepository;
@@ -72,10 +78,21 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO createProject(CreateProjectRequest request, User owner) {
+        String normalizedName = normalizeRequiredText(request.getName(), "Project name is required", PROJECT_NAME_MAX, "Project name");
+        String normalizedDescription = normalizeOptionalText(request.getDescription(), PROJECT_DESCRIPTION_MAX, "Project description");
+        boolean generateTasks = !Boolean.FALSE.equals(request.getGenerateTasks());
+        if (generateTasks) {
+            ensureSufficientDescriptionForGeneration(normalizedDescription);
+        }
+
+        if (!projectRepository.findActiveByOwnerAndNameIgnoreCase(owner, normalizedName).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Project name already exists for this owner");
+        }
+
         // Create project
         Project project = Project.builder()
-            .name(request.getName())
-            .description(request.getDescription())
+            .name(normalizedName)
+            .description(normalizedDescription)
             .owner(owner)
             .members(java.util.Collections.singleton(owner))
             .isDeletionMarked(false)
@@ -84,15 +101,15 @@ public class ProjectService {
         project = projectRepository.save(project);
         projectMemberRepository.upsertMemberRole(project.getId(), owner.getId(), ProjectMemberRole.OWNER.toDbValue());
 
-        if (Boolean.FALSE.equals(request.getGenerateTasks())) {
+        if (!generateTasks) {
             Board emptyBoard = boardGenerator.generateEmptyBoard(project);
             return toProjectDTO(project, emptyBoard);
         }
 
         // Generate AI analysis
         AIAnalysisResult analysisResult = aiEngine.analyzeProjectDescription(
-            request.getName(),
-            request.getDescription()
+            normalizedName,
+            normalizedDescription
         );
 
         // Generate board
@@ -134,18 +151,24 @@ public class ProjectService {
         requireEditableProject(project, userId);
 
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
-            project.setName(request.getName().trim());
+            String normalizedName = normalizeRequiredText(request.getName(), "Project name is required", PROJECT_NAME_MAX, "Project name");
+            boolean duplicate = projectRepository.findActiveByOwnerAndNameIgnoreCase(project.getOwner(), normalizedName).stream()
+                .anyMatch(existing -> !existing.getId().equals(project.getId()));
+            if (duplicate) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Project name already exists for this owner");
+            }
+            project.setName(normalizedName);
         }
 
         if (request.getDescription() != null) {
-            project.setDescription(request.getDescription().trim());
+            project.setDescription(normalizeOptionalText(request.getDescription(), PROJECT_DESCRIPTION_MAX, "Project description"));
         }
 
-        project = projectRepository.save(project);
+        Project savedProject = projectRepository.save(project);
 
         List<Board> boards = boardRepository.findByProjectId(projectId);
         Board board = boards.isEmpty() ? null : boards.get(0);
-        return toProjectDTO(project, board);
+        return toProjectDTO(savedProject, board);
     }
 
     @Transactional
@@ -158,20 +181,24 @@ public class ProjectService {
     }
 
     @Transactional
-    public CardDTO createCard(UUID stageId, String title, String description, String priority, UUID userId) {
+    public CardDTO createCard(UUID stageId, String title, String description, String priority, UUID assigneeId, UUID userId) {
         Stage stage = stageRepository.findById(stageId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found"));
+        if (Boolean.TRUE.equals(stage.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found");
+        }
 
         requireEditableProject(stage.getBoard().getProject(), userId);
 
         int newPosition = stage.getCards().size();
 
         Card card = Card.builder()
-            .title(title)
-            .description(description)
-            .priority(Card.Priority.valueOf(priority))
+            .title(normalizeRequiredText(title, "Card title is required", CARD_TITLE_MAX, "Card title"))
+            .description(normalizeOptionalText(description, CARD_DESCRIPTION_MAX, "Card description"))
+            .priority(parsePriority(priority))
             .stage(stage)
             .position(newPosition)
+            .assignee(resolveAssignee(stage.getBoard().getProject(), assigneeId))
             .build();
 
         card = cardRepository.save(card);
@@ -179,17 +206,21 @@ public class ProjectService {
     }
 
     @Transactional
-    public CardDTO updateCard(UUID cardId, String title, String description, String priority, UUID userId) {
+    public CardDTO updateCard(UUID cardId, String title, String description, String priority, UUID assigneeId, UUID userId) {
         Card card = cardRepository.findById(cardId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found"));
+        if (Boolean.TRUE.equals(card.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found");
+        }
 
         requireEditableProject(card.getStage().getBoard().getProject(), userId);
 
-        card.setTitle(title);
-        card.setDescription(description);
+        card.setTitle(normalizeRequiredText(title, "Card title is required", CARD_TITLE_MAX, "Card title"));
+        card.setDescription(normalizeOptionalText(description, CARD_DESCRIPTION_MAX, "Card description"));
         if (priority != null) {
-            card.setPriority(Card.Priority.valueOf(priority));
+            card.setPriority(parsePriority(priority));
         }
+        card.setAssignee(resolveAssignee(card.getStage().getBoard().getProject(), assigneeId));
 
         card = cardRepository.save(card);
         return toCardDTO(card);
@@ -199,9 +230,15 @@ public class ProjectService {
     public CardDTO moveCard(UUID cardId, UUID targetStageId, UUID userId) {
         Card card = cardRepository.findById(cardId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found"));
+        if (Boolean.TRUE.equals(card.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found");
+        }
 
         Stage targetStage = stageRepository.findById(targetStageId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Target stage not found"));
+        if (Boolean.TRUE.equals(targetStage.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Target stage not found");
+        }
 
         Project sourceProject = card.getStage().getBoard().getProject();
         Project targetProject = targetStage.getBoard().getProject();
@@ -232,6 +269,9 @@ public class ProjectService {
     public void deleteCard(UUID cardId, UUID userId) {
         Card card = cardRepository.findById(cardId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found"));
+        if (Boolean.TRUE.equals(card.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Card not found");
+        }
 
         requireEditableProject(card.getStage().getBoard().getProject(), userId);
 
@@ -243,13 +283,16 @@ public class ProjectService {
     public StageDTO addStage(UUID boardId, String title, String color, UUID userId) {
         Board board = boardRepository.findById(boardId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Board not found"));
+        if (Boolean.TRUE.equals(board.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Board not found");
+        }
 
         requireEditableProject(board.getProject(), userId);
 
         int newPosition = board.getStages().size();
 
         Stage stage = Stage.builder()
-            .title(title)
+            .title(normalizeRequiredText(title, "Stage title is required", STAGE_TITLE_MAX, "Stage title"))
             .color(color)
             .position(newPosition)
             .board(board)
@@ -264,6 +307,9 @@ public class ProjectService {
     public void deleteStage(UUID stageId, UUID userId) {
         Stage stage = stageRepository.findById(stageId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found"));
+        if (Boolean.TRUE.equals(stage.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found");
+        }
 
         requireEditableProject(stage.getBoard().getProject(), userId);
 
@@ -275,10 +321,13 @@ public class ProjectService {
     public StageDTO renameStage(UUID stageId, String newTitle, UUID userId) {
         Stage stage = stageRepository.findById(stageId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found"));
+        if (Boolean.TRUE.equals(stage.getIsDeletionMarked())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Stage not found");
+        }
 
         requireEditableProject(stage.getBoard().getProject(), userId);
 
-        stage.setTitle(newTitle);
+        stage.setTitle(normalizeRequiredText(newTitle, "Stage title is required", STAGE_TITLE_MAX, "Stage title"));
         stage = stageRepository.save(stage);
         return toStageDTO(stage);
     }
@@ -300,16 +349,14 @@ public class ProjectService {
         Project project = getProjectForAccess(projectId, userId);
         ensureProjectOwner(project, userId);
 
-        if (email == null || email.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email is required");
-        }
+        String normalizedEmail = normalizeEmail(email);
 
         ProjectMemberRole requestedRole = ProjectMemberRole.fromRequest(role);
         if (requestedRole == ProjectMemberRole.OWNER) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add another owner");
         }
 
-        User user = userRepository.findByEmailIgnoreCase(email.trim())
+        User user = userRepository.findByEmailIgnoreCase(normalizedEmail)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND,
                 "User not found. Ask them to register first before adding to the project."
@@ -433,7 +480,25 @@ public class ProjectService {
             .priority(card.getPriority().toString())
             .stageId(card.getStage().getId())
             .createdAt(card.getCreatedAt())
+            .assignee(card.getAssignee() != null ? toUserDTO(card.getAssignee(), ProjectMemberRole.VIEWER) : null)
             .build();
+    }
+
+    private User resolveAssignee(Project project, UUID assigneeId) {
+        if (assigneeId == null) {
+            return null;
+        }
+
+        if (project.getOwner().getId().equals(assigneeId)) {
+            return project.getOwner();
+        }
+
+        if (projectMemberRepository.findMemberRole(project.getId(), assigneeId).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assignee must be a project member");
+        }
+
+        return userRepository.findById(assigneeId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assignee user not found"));
     }
 
     private UserDTO toUserDTO(User user, ProjectMemberRole role) {
@@ -535,5 +600,57 @@ public class ProjectService {
             return ProjectMemberRole.OWNER;
         }
         return roleMap.getOrDefault(userId, ProjectMemberRole.VIEWER);
+    }
+
+    private String normalizeRequiredText(String value, String requiredMessage, int maxLength, String fieldName) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, requiredMessage);
+        }
+
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + " exceeds maximum length of " + maxLength);
+        }
+
+        return normalized;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        if (value == null) {
+            return null;
+        }
+
+        String normalized = value.trim();
+        if (normalized.length() > maxLength) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldName + " exceeds maximum length of " + maxLength);
+        }
+
+        return normalized;
+    }
+
+    private String normalizeEmail(String email) {
+        if (email == null || email.trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email is required");
+        }
+        return email.trim().toLowerCase();
+    }
+
+    private Card.Priority parsePriority(String priority) {
+        try {
+            return Card.Priority.valueOf(priority.trim().toUpperCase());
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Priority must be LOW, MEDIUM, HIGH, or CRITICAL");
+        }
+    }
+
+    private void ensureSufficientDescriptionForGeneration(String description) {
+        if (description == null || description.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Project description is required for AI board generation");
+        }
+
+        long words = description.trim().split("\\s+").length;
+        if (words < 5) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Project description must contain at least 5 words for AI generation");
+        }
     }
 }

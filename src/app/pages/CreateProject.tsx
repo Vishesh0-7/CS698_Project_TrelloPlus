@@ -32,8 +32,17 @@ export function CreateProject() {
     if (!projectName.trim()) {
       newErrors.name = 'Project name is required';
     }
+    if (projectName.trim().length > 255) {
+      newErrors.name = 'Project name must be 255 characters or fewer';
+    }
     if (!projectDescription.trim()) {
       newErrors.description = 'Project description is required for AI generation';
+    }
+    if (projectDescription.trim().length > 5000) {
+      newErrors.description = 'Project description must be 5000 characters or fewer';
+    }
+    if (projectDescription.trim() && projectDescription.trim().split(/\s+/).length < 5) {
+      newErrors.description = 'Project description must contain at least 5 words for AI generation';
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -71,6 +80,18 @@ export function CreateProject() {
   const handleCreateEmptyBoard = async () => {
     if (!projectName.trim()) {
       setErrors({ name: 'Project name is required' });
+      setFormState('validating');
+      return;
+    }
+
+    if (projectName.trim().length > 255) {
+      setErrors({ name: 'Project name must be 255 characters or fewer' });
+      setFormState('validating');
+      return;
+    }
+
+    if (projectDescription.trim().length > 5000) {
+      setErrors({ description: 'Project description must be 5000 characters or fewer' });
       setFormState('validating');
       return;
     }

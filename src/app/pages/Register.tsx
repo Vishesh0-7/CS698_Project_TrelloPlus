@@ -8,6 +8,8 @@ import { apiService } from '../services/api';
 import { useProjectStore } from '../store/projectStore';
 
 export function Register() {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/;
   const navigate = useNavigate();
   const updateUser = useProjectStore((s) => s.updateUser);
   const [fullName, setFullName] = useState('');
@@ -31,6 +33,21 @@ export function Register() {
 
     if (password.length < 8) {
       toast.error('Password must be at least 8 characters');
+      return;
+    }
+
+    if (!emailRegex.test(email.trim())) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    if (fullName.trim().length < 2 || fullName.trim().length > 100) {
+      toast.error('Full name must be between 2 and 100 characters');
+      return;
+    }
+
+    if (!strongPasswordRegex.test(password)) {
+      toast.error('Password must include uppercase, lowercase, number, and special character');
       return;
     }
 

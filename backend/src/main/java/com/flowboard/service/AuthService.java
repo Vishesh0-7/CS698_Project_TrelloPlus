@@ -4,8 +4,10 @@ import com.flowboard.dto.*;
 import com.flowboard.entity.User;
 import com.flowboard.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -15,16 +17,19 @@ public class AuthService {
     private final JWTService jwtService;
 
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
+        String email = normalizeEmail(request.getEmail());
+        if (userRepository.existsByEmail(email)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
         }
+
+        validatePasswordBusinessRules(request.getPassword(), email, request.getFullName());
 
         String username = resolveUsername(request);
 
         User user = User.builder()
-            .email(request.getEmail())
+            .email(email)
             .username(username)
-            .fullName(request.getFullName())
+            .fullName(request.getFullName().trim())
             .passwordHash(passwordEncoder.encode(request.getPassword()))
             .role(User.UserRole.MEMBER)
             .build();
@@ -47,7 +52,7 @@ public class AuthService {
         }
 
         if (rawUsername == null || rawUsername.isBlank()) {
-            rawUsername = request.getEmail() != null ? request.getEmail().split("@")[0] : "user";
+            rawUsername = request.getEmail() != null ? normalizeEmail(request.getEmail()).split("@")[0] : "user";
         }
 
         String base = rawUsername
@@ -71,11 +76,12 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-            .orElseThrow(() -> new RuntimeException("User not found"));
+        String email = normalizeEmail(request.getEmail());
+        User user = userRepository.findByEmail(email)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("Invalid password");
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password");
         }
 
         String token = jwtService.generateToken(user.getId(), user.getEmail(), user.getRole().toString());
@@ -89,7 +95,7 @@ public class AuthService {
 
     public User getUserById(String userId) {
         return userRepository.findById(java.util.UUID.fromString(userId))
-            .orElseThrow(() -> new RuntimeException("User not found"));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
     }
 
     public UserDTO getUserProfile(String userId) {
@@ -101,15 +107,16 @@ public class AuthService {
         User user = getUserById(userId);
         
         if (request.getFullName() != null && !request.getFullName().isBlank()) {
-            user.setFullName(request.getFullName());
+            user.setFullName(request.getFullName().trim());
         }
         
         if (request.getEmail() != null && !request.getEmail().isBlank()) {
+            String normalizedEmail = normalizeEmail(request.getEmail());
             // Check if email is already taken by another user
-            if (userRepository.existsByEmailAndIdNot(request.getEmail(), user.getId())) {
-                throw new RuntimeException("Email already exists");
+            if (userRepository.existsByEmailAndIdNot(normalizedEmail, user.getId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
             }
-            user.setEmail(request.getEmail());
+            user.setEmail(normalizedEmail);
         }
         
         user = userRepository.save(user);
@@ -125,5 +132,27 @@ public class AuthService {
             .role(user.getRole().toString())
             .createdAt(user.getCreatedAt())
             .build();
+    }
+
+    public void logout(String token) {
+        jwtService.revokeToken(token);
+    }
+
+    private String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase();
+    }
+
+    private void validatePasswordBusinessRules(String password, String email, String fullName) {
+        String passwordLower = password.toLowerCase();
+        if (email != null && passwordLower.contains(email.toLowerCase())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must not contain email");
+        }
+
+        if (fullName != null) {
+            String nameToken = fullName.trim().toLowerCase().replace(" ", "");
+            if (!nameToken.isEmpty() && passwordLower.contains(nameToken)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must not contain full name");
+            }
+        }
     }
 }
