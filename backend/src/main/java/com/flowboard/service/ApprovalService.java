@@ -48,6 +48,10 @@ public class ApprovalService {
             .findByApprovalRequestIdAndUserId(approvalRequest.getId(), respondingUser.getId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Response entry not found"));
 
+        if (response.getResponse() != ApprovalResponseSummary.ApprovalResponse.PENDING) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "You have already submitted your approval decision");
+        }
+
         // Parse response
         ApprovalResponseSummary.ApprovalResponse approvalResponse;
         try {
@@ -178,6 +182,10 @@ public class ApprovalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
         }
 
+        if (actionItem.getApprovalStatus() == ActionItem.ApprovalStatus.APPROVED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Action item is already approved");
+        }
+
         actionItem.setApprovalStatus(ActionItem.ApprovalStatus.APPROVED);
         actionItemRepository.save(actionItem);
     }
@@ -192,6 +200,10 @@ public class ApprovalService {
         UUID meetingId = decision.getMeeting().getId();
         if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, respondingUser.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+
+        if (decision.getApprovalStatus() == Decision.ApprovalStatus.APPROVED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Decision is already approved");
         }
 
         decision.setApprovalStatus(Decision.ApprovalStatus.APPROVED);

@@ -26,7 +26,7 @@ export function Dashboard() {
         const convertedProjects = userProjects.map(mapProjectResponseToProject);
         setProjects(convertedProjects);
       } catch (error) {
-        toast.error('Failed to load projects');
+        toast.error(error instanceof Error ? error.message : 'Failed to load projects');
       } finally {
         if (shouldBlockUI) {
           setIsLoading(false);

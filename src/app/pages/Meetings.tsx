@@ -4,6 +4,25 @@ import { useMeetingStore, type Meeting } from '../store/meetingStore';
 import { useNavigate } from 'react-router';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { Calendar, Clock, Plus, FileText, ListChecks } from 'lucide-react';
 import { apiService, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
@@ -23,6 +42,11 @@ export function Meetings() {
   const setChangesStore = useChangeStore((s) => s.setChanges);
   const allChanges = useChangeStore((s) => s.changes);
   const navigate = useNavigate();
+  const [rescheduleMeeting, setRescheduleMeeting] = useState<MeetingResponse | null>(null);
+  const [removeMeeting, setRemoveMeeting] = useState<MeetingResponse | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [isUpdatingMeeting, setIsUpdatingMeeting] = useState(false);
 
   const normalizeMeetingStatus = (status: string): Meeting['status'] => {
     switch (status) {
@@ -82,49 +106,84 @@ export function Meetings() {
     rollbackAvailable: false,
   });
 
+  const loadMeetings = async () => {
+    setIsLoading(true);
+
+    try {
+      const projects = await apiService.getUserProjects();
+
+      const meetingResults = await Promise.all(
+        projects.map((project) => apiService.getMeetingsByProject(project.id))
+      );
+
+      const changeResults = await Promise.all(
+        projects.map((project) => apiService.listChanges({ projectId: project.id }))
+      );
+
+      const mergedMeetings = meetingResults.flat();
+      const uniqueMeetings = Array.from(new Map(mergedMeetings.map((m) => [m.id, m])).values());
+      const mergedChanges = changeResults.flat();
+      const uniqueChanges = Array.from(new Map(mergedChanges.map((c) => [c.id, c])).values());
+
+      setMeetings(uniqueMeetings);
+      setMeetingsStore(uniqueMeetings.map(mapMeetingToStore));
+      setChangesStore(uniqueChanges.map(mapChangeToStore));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const openRescheduleDialog = (meeting: MeetingResponse) => {
+    setRescheduleMeeting(meeting);
+    setRescheduleDate(meeting.meetingDate);
+    setRescheduleTime((meeting.meetingTime || '').slice(0, 5));
+  };
+
+  const handleRescheduleMeeting = async () => {
+    if (!rescheduleMeeting || !rescheduleDate || !rescheduleTime) {
+      toast.error('Please provide both date and time');
+      return;
+    }
+
+    setIsUpdatingMeeting(true);
+    try {
+      await apiService.updateMeeting(rescheduleMeeting.id, {
+        title: rescheduleMeeting.title,
+        description: rescheduleMeeting.description,
+        meetingDate: rescheduleDate,
+        meetingTime: `${rescheduleTime}:00`,
+        platform: rescheduleMeeting.platform,
+        meetingLink: rescheduleMeeting.meetingLink,
+      });
+      toast.success('Meeting rescheduled');
+      setRescheduleMeeting(null);
+      await loadMeetings();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to reschedule meeting');
+    } finally {
+      setIsUpdatingMeeting(false);
+    }
+  };
+
+  const handleRemoveMeeting = async () => {
+    if (!removeMeeting) return;
+    setIsUpdatingMeeting(true);
+    try {
+      await apiService.deleteMeeting(removeMeeting.id);
+      toast.success('Meeting removed');
+      setRemoveMeeting(null);
+      await loadMeetings();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove meeting');
+    } finally {
+      setIsUpdatingMeeting(false);
+    }
+  };
+
   useEffect(() => {
-    let isMounted = true;
-
-    const loadMeetings = async () => {
-      setIsLoading(true);
-
-      try {
-        const projects = await apiService.getUserProjects();
-
-        const meetingResults = await Promise.all(
-          projects.map((project) => apiService.getMeetingsByProject(project.id))
-        );
-
-        const changeResults = await Promise.all(
-          projects.map((project) => apiService.listChanges({ projectId: project.id }))
-        );
-
-        const mergedMeetings = meetingResults.flat();
-        const uniqueMeetings = Array.from(new Map(mergedMeetings.map((m) => [m.id, m])).values());
-        const mergedChanges = changeResults.flat();
-        const uniqueChanges = Array.from(new Map(mergedChanges.map((c) => [c.id, c])).values());
-
-        if (isMounted) {
-          setMeetings(uniqueMeetings);
-          setMeetingsStore(uniqueMeetings.map(mapMeetingToStore));
-          setChangesStore(uniqueChanges.map(mapChangeToStore));
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
     void loadMeetings();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
   const normalizeMeetingStatusLabel = (status: string) => {
@@ -247,16 +306,42 @@ export function Meetings() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex gap-2 pt-4 border-t border-gray-200">
+                  <div className="flex gap-2 pt-4 border-t border-gray-200 flex-wrap">
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => navigate(normalizedStatus === 'scheduled' ? `/meeting-transcript/${meeting.id}` : `/meetings/${meeting.id}`)}
-                      className="flex-1"
+                      className="flex-1 min-w-[120px]"
                     >
                       <FileText className="w-4 h-4 mr-2" />
                       View
                     </Button>
+                    {normalizedStatus === 'scheduled' && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openRescheduleDialog(meeting);
+                          }}
+                          className="flex-1 min-w-[120px]"
+                        >
+                          Reschedule
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRemoveMeeting(meeting);
+                          }}
+                          className="flex-1 min-w-[120px] text-red-700 border-red-300"
+                        >
+                          Remove
+                        </Button>
+                      </>
+                    )}
                     {changeCount > 0 && (
                       <Button
                         variant="outline"
@@ -265,7 +350,7 @@ export function Meetings() {
                           e.stopPropagation();
                           navigate(`/meetings/${meeting.id}/changes`);
                         }}
-                        className="flex-1"
+                        className="flex-1 min-w-[120px]"
                       >
                         <ListChecks className="w-4 h-4 mr-2" />
                         Changes ({changeCount})
@@ -278,6 +363,48 @@ export function Meetings() {
           </div>
         )}
       </div>
+
+      <Dialog open={!!rescheduleMeeting} onOpenChange={(open) => { if (!open) setRescheduleMeeting(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reschedule Meeting</DialogTitle>
+            <DialogDescription>
+              Update date and time for {rescheduleMeeting?.title || 'this meeting'}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium text-gray-700">Date</label>
+              <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} min={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Time</label>
+              <Input type="time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRescheduleMeeting(null)} disabled={isUpdatingMeeting}>Cancel</Button>
+            <Button onClick={() => void handleRescheduleMeeting()} disabled={isUpdatingMeeting}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!removeMeeting} onOpenChange={(open) => { if (!open) setRemoveMeeting(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Scheduled Meeting?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove {removeMeeting?.title || 'this meeting'}. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUpdatingMeeting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleRemoveMeeting()} className="bg-red-600 hover:bg-red-700" disabled={isUpdatingMeeting}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

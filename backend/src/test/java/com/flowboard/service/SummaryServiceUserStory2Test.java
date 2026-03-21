@@ -17,6 +17,7 @@ import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -106,7 +107,7 @@ class SummaryServiceUserStory2Test {
             .createdBy(testUser)
             .build();
 
-            when(boardRepository.findByProjectId(projectId)).thenReturn(Collections.emptyList());
+                lenient().when(boardRepository.findByProjectId(projectId)).thenReturn(Collections.emptyList());
     }
 
     @Test

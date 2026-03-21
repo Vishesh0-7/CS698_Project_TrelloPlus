@@ -107,6 +107,17 @@ export function CreateMeeting() {
       return;
     }
 
+    const scheduledAt = new Date(`${date}T${time}:00`);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      toast.error('Please enter a valid meeting date and time');
+      return;
+    }
+
+    if (scheduledAt.getTime() < Date.now()) {
+      toast.error('Meeting cannot be scheduled in the past');
+      return;
+    }
+
     try {
       await apiService.createMeeting({
         projectId: selectedProjectId,
@@ -207,6 +218,7 @@ export function CreateMeeting() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                min={new Date().toISOString().split('T')[0]}
               />
             </div>
             <div>

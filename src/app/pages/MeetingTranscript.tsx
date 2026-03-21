@@ -47,6 +47,8 @@ export function MeetingTranscript() {
     );
   }
 
+  const isScheduledMeeting = meeting.status === 'SCHEDULED';
+
   const handleBack = () => {
     if (meeting?.projectId) {
       navigate(`/project/${meeting.projectId}`);
@@ -118,7 +120,14 @@ export function MeetingTranscript() {
             value={transcript}
             onChange={(e) => setTranscript(e.target.value)}
             className="min-h-[400px] font-mono text-sm mb-6"
+            disabled={!isScheduledMeeting || isGenerating}
           />
+
+          {!isScheduledMeeting && (
+            <p className="text-sm text-amber-700 mb-4">
+              This meeting is no longer scheduled, so transcript editing and rescheduling actions are disabled.
+            </p>
+          )}
 
           <div className="flex gap-3">
             <Button 
@@ -132,7 +141,7 @@ export function MeetingTranscript() {
             <Button
               onClick={handleGenerateSummary}
               className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-              disabled={isGenerating}
+              disabled={isGenerating || !isScheduledMeeting}
             >
               {isGenerating ? (
                 <>

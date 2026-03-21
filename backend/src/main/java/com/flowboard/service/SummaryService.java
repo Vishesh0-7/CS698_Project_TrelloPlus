@@ -15,6 +15,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -37,6 +38,11 @@ public class SummaryService {
     private final StageRepository stageRepository;
     private final CardRepository cardRepository;
     private final ObjectMapper objectMapper;
+
+    private static final Set<Meeting.MeetingStatus> FINALIZED_MEETING_STATUSES = Set.of(
+        Meeting.MeetingStatus.APPROVED,
+        Meeting.MeetingStatus.REJECTED
+    );
 
     /**
      * Generates summary from meeting transcript using AI analysis
@@ -188,6 +194,142 @@ public class SummaryService {
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
         return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO addActionItem(UUID meetingId, String description, String sourceContext, String priority, User actor) {
+        Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+
+        ActionItem.Priority parsedPriority = ActionItem.Priority.MEDIUM;
+        if (priority != null && !priority.isBlank()) {
+            try {
+                parsedPriority = ActionItem.Priority.valueOf(priority.toUpperCase());
+            } catch (IllegalArgumentException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid action item priority");
+            }
+        }
+
+        ActionItem actionItem = ActionItem.builder()
+            .meeting(meeting)
+            .description(description)
+            .sourceContext(sourceContext)
+            .priority(parsedPriority)
+            .status(ActionItem.ActionItemStatus.PENDING)
+            .approvalStatus(ActionItem.ApprovalStatus.PENDING)
+            .build();
+
+        actionItemRepository.save(actionItem);
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO updateActionItem(UUID actionItemId, String description, String sourceContext, String priority, User actor) {
+        ActionItem actionItem = actionItemRepository.findById(actionItemId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Action item not found"));
+
+        Meeting meeting = getEditableMeetingForMember(actionItem.getMeeting().getId(), actor);
+
+        if (description != null) {
+            actionItem.setDescription(description);
+        }
+        if (sourceContext != null) {
+            actionItem.setSourceContext(sourceContext);
+        }
+        if (priority != null && !priority.isBlank()) {
+            try {
+                actionItem.setPriority(ActionItem.Priority.valueOf(priority.toUpperCase()));
+            } catch (IllegalArgumentException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid action item priority");
+            }
+        }
+
+        actionItemRepository.save(actionItem);
+
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meeting.getId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO deleteActionItem(UUID actionItemId, User actor) {
+        ActionItem actionItem = actionItemRepository.findById(actionItemId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Action item not found"));
+
+        UUID meetingId = actionItem.getMeeting().getId();
+        getEditableMeetingForMember(meetingId, actor);
+        actionItemRepository.delete(actionItem);
+
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO addDecision(UUID meetingId, String description, String sourceContext, String impactSummary, User actor) {
+        Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+
+        Decision decision = Decision.builder()
+            .meeting(meeting)
+            .description(description)
+            .sourceContext(sourceContext)
+            .impactSummary(impactSummary)
+            .approvalStatus(Decision.ApprovalStatus.PENDING)
+            .build();
+
+        decisionRepository.save(decision);
+
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO updateDecision(UUID decisionId, String description, String sourceContext, String impactSummary, User actor) {
+        Decision decision = decisionRepository.findById(decisionId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found"));
+
+        Meeting meeting = getEditableMeetingForMember(decision.getMeeting().getId(), actor);
+
+        if (description != null) {
+            decision.setDescription(description);
+        }
+        if (sourceContext != null) {
+            decision.setSourceContext(sourceContext);
+        }
+        if (impactSummary != null) {
+            decision.setImpactSummary(impactSummary);
+        }
+
+        decisionRepository.save(decision);
+
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meeting.getId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    public MeetingSummaryDTO deleteDecision(UUID decisionId, User actor) {
+        Decision decision = decisionRepository.findById(decisionId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found"));
+
+        UUID meetingId = decision.getMeeting().getId();
+        getEditableMeetingForMember(meetingId, actor);
+        decisionRepository.delete(decision);
+
+        MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+        return convertToDTO(summary);
+    }
+
+    private Meeting getEditableMeetingForMember(UUID meetingId, User actor) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, actor.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+
+        if (FINALIZED_MEETING_STATUSES.contains(meeting.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Meeting summary items cannot be edited after meeting is finalized");
+        }
+
+        return meeting;
     }
 
     /**

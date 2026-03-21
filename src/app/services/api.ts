@@ -128,6 +128,15 @@ export interface CreateMeetingApiRequest {
   meetingLink?: string;
 }
 
+export interface UpdateMeetingApiRequest {
+  title: string;
+  description?: string;
+  meetingDate: string;
+  meetingTime?: string;
+  platform?: string;
+  meetingLink?: string;
+}
+
 export interface EndMeetingApiRequest {
   meetingId: string;
   transcript: string;
@@ -139,6 +148,7 @@ export interface SummaryItemDTO {
   sourceContext?: string;
   approvalStatus?: 'PENDING' | 'APPROVED';
   status?: string;
+  createdAt?: string;
 }
 
 export interface MeetingSummaryResponse {
@@ -637,6 +647,31 @@ export const apiService = {
     return response.json();
   },
 
+  async updateMeeting(meetingId: string, request: UpdateMeetingApiRequest): Promise<MeetingResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/meetings/${meetingId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to update meeting'));
+    }
+
+    return response.json();
+  },
+
+  async deleteMeeting(meetingId: string): Promise<void> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/meetings/${meetingId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to delete meeting'));
+    }
+  },
+
   async endMeeting(meetingId: string, transcript: string): Promise<MeetingResponse> {
     const payload: EndMeetingApiRequest = { meetingId, transcript };
     const response = await requestWithTimeout(`${API_BASE_URL}/meetings/${meetingId}/end`, {
@@ -724,6 +759,88 @@ export const apiService = {
     if (!response.ok) {
       throw new Error(await parseApiErrorMessage(response, 'Failed to approve decision item'));
     }
+  },
+
+  async addActionItem(meetingId: string, request: { description: string; sourceContext?: string; priority?: string }): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/meeting/${meetingId}/action-items`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to add action item'));
+    }
+
+    return response.json();
+  },
+
+  async updateActionItem(itemId: string, request: { description: string; sourceContext?: string; priority?: string }): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/action-items/${itemId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to update action item'));
+    }
+
+    return response.json();
+  },
+
+  async deleteActionItem(itemId: string): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/action-items/${itemId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to delete action item'));
+    }
+
+    return response.json();
+  },
+
+  async addDecision(meetingId: string, request: { description: string; sourceContext?: string; impactSummary?: string }): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/meeting/${meetingId}/decisions`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to add decision'));
+    }
+
+    return response.json();
+  },
+
+  async updateDecision(itemId: string, request: { description: string; sourceContext?: string; impactSummary?: string }): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/decisions/${itemId}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to update decision'));
+    }
+
+    return response.json();
+  },
+
+  async deleteDecision(itemId: string): Promise<MeetingSummaryResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/summaries/decisions/${itemId}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to delete decision'));
+    }
+
+    return response.json();
   },
 
   async listChanges(params?: { meetingId?: string; projectId?: string; status?: string }): Promise<ChangeResponse[]> {

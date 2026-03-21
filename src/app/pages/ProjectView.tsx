@@ -6,7 +6,26 @@ import { useMeetingStore, type Meeting } from '../store/meetingStore';
 import { KanbanBoard } from './KanbanBoard';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
 import { ChangeDetailModal } from '../components/ChangeDetailModal';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { Calendar, Clock, Plus, FileText, ListChecks, CheckCircle, BookOpen } from 'lucide-react';
 import { apiService, mapProjectResponseToProject, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
@@ -23,7 +42,13 @@ export function ProjectView() {
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [projectLoadFailed, setProjectLoadFailed] = useState(false);
   const [projectMeetings, setProjectMeetings] = useState<MeetingResponse[]>([]);
+  const [rescheduleMeeting, setRescheduleMeeting] = useState<MeetingResponse | null>(null);
+  const [removeMeeting, setRemoveMeeting] = useState<MeetingResponse | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [isUpdatingMeeting, setIsUpdatingMeeting] = useState(false);
   const attemptedProjectLoadRef = useRef<string | null>(null);
+  const decisionsLoadKeyRef = useRef<string | null>(null);
   
   // Update active tab when URL changes
   useEffect(() => {
@@ -40,8 +65,7 @@ export function ProjectView() {
   const allChanges = useChangeStore((s) => s.changes);
 
   const loadProjectDecisions = async (projectMeetingsList: MeetingResponse[]) => {
-    if (!projectId || !project) {
-      console.log('[Decisions] Skipping - no projectId or project');
+    if (!projectId) {
       return;
     }
 
@@ -49,13 +73,8 @@ export function ProjectView() {
     const approvedMeetings = projectMeetingsList.filter(
       (meeting) => meeting.status === 'APPROVED'
     );
-    console.log(
-      `[Decisions] Found ${approvedMeetings.length} approved meetings (total: ${projectMeetingsList.length})`,
-      approvedMeetings.map((m) => ({ id: m.id, title: m.title, status: m.status }))
-    );
 
     if (approvedMeetings.length === 0) {
-      console.log('[Decisions] No approved meetings - setting empty decisions');
       updateProject(projectId, { decisions: [] });
       return;
     }
@@ -64,13 +83,15 @@ export function ProjectView() {
     const summaryResults = await Promise.all(
       approvedMeetings.map(async (meeting) => {
         try {
-          console.log(`[Decisions] Fetching summary for meeting: ${meeting.title} (${meeting.id})`);
-          const summary = await apiService.getSummaryByMeeting(meeting.id);
-          console.log(
-            `[Decisions] Got summary with ${summary.decisions?.length ?? 0} decisions, ` +
-            `${summary.actionItems?.length ?? 0} action items`
-          );
-          return { meeting, summary };
+          const [summary, approvalStatus] = await Promise.all([
+            apiService.getSummaryByMeeting(meeting.id),
+            apiService.getApprovalStatus(meeting.id),
+          ]);
+          const approvedByUsers = (approvalStatus.responses || [])
+            .filter((response) => response.response === 'APPROVED')
+            .map((response) => response.userName)
+            .filter((name) => Boolean(name && name.trim().length > 0));
+          return { meeting, summary, approvedByUsers };
         } catch (error) {
           console.error(`[Decisions] Error fetching summary for meeting ${meeting.id}:`, error);
           return null;
@@ -81,22 +102,28 @@ export function ProjectView() {
     // Extract decisions from summaries
     const decisions = summaryResults
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-      .flatMap(({ meeting, summary }) => {
+      .flatMap(({ meeting, summary, approvedByUsers }) => {
         const decisionList = summary.decisions || [];
-        console.log(`[Decisions] Extracting ${decisionList.length} decisions from meeting: ${meeting.title}`);
         return decisionList.map((decision) => ({
           id: decision.id,
           description: decision.description,
           meetingId: meeting.id,
           meetingTitle: meeting.title,
           sourceContext: decision.sourceContext || '',
-          approvedAt: meeting.createdAt,
-          approvedBy: 'Meeting approval consensus',
+          approvedAt: summary.approvedAt || summary.generatedAt || `${meeting.meetingDate}T${meeting.meetingTime || '00:00:00'}`,
+          approvedBy: approvedByUsers.length > 0 ? approvedByUsers.join(', ') : 'N/A',
         }));
       });
 
-    console.log(`[Decisions] Total extracted: ${decisions.length} decisions, updating project store`);
     updateProject(projectId, { decisions });
+  };
+
+  const getApprovedMeetingsLoadKey = (meetings: MeetingResponse[]) => {
+    return meetings
+      .filter((meeting) => meeting.status === 'APPROVED')
+      .map((meeting) => `${meeting.id}:${meeting.status}`)
+      .sort()
+      .join('|');
   };
 
   const normalizeMeetingStatus = (status: string): Meeting['status'] => {
@@ -188,17 +215,80 @@ export function ProjectView() {
     };
   }, [projectId]);
 
-  useEffect(() => {
-    if (!projectId || !project) {
+  const refreshProjectMeetings = async () => {
+    if (!projectId) return;
+
+    const meetings = await apiService.getMeetingsByProject(projectId);
+    const changes = await apiService.listChanges({ projectId });
+    setProjectMeetings(meetings);
+    setMeetingsStore(meetings.map(mapMeetingToStore));
+    setChangesStore(changes.map(mapChangeToStore));
+  };
+
+  const openRescheduleDialog = (meeting: MeetingResponse) => {
+    setRescheduleMeeting(meeting);
+    setRescheduleDate(meeting.meetingDate);
+    setRescheduleTime((meeting.meetingTime || '').slice(0, 5));
+  };
+
+  const handleRescheduleMeeting = async () => {
+    if (!rescheduleMeeting || !rescheduleDate || !rescheduleTime) {
+      toast.error('Please provide both date and time');
       return;
     }
+
+    setIsUpdatingMeeting(true);
+    try {
+      await apiService.updateMeeting(rescheduleMeeting.id, {
+        title: rescheduleMeeting.title,
+        description: rescheduleMeeting.description,
+        meetingDate: rescheduleDate,
+        meetingTime: `${rescheduleTime}:00`,
+        platform: rescheduleMeeting.platform,
+        meetingLink: rescheduleMeeting.meetingLink,
+      });
+      toast.success('Meeting rescheduled');
+      setRescheduleMeeting(null);
+      await refreshProjectMeetings();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to reschedule meeting');
+    } finally {
+      setIsUpdatingMeeting(false);
+    }
+  };
+
+  const handleRemoveMeeting = async () => {
+    if (!removeMeeting) return;
+    setIsUpdatingMeeting(true);
+    try {
+      await apiService.deleteMeeting(removeMeeting.id);
+      toast.success('Meeting removed');
+      setRemoveMeeting(null);
+      await refreshProjectMeetings();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to remove meeting');
+    } finally {
+      setIsUpdatingMeeting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!projectId || activeTab !== 'decisions') {
+      return;
+    }
+
+    const approvedMeetingsLoadKey = getApprovedMeetingsLoadKey(projectMeetings);
+    if (decisionsLoadKeyRef.current === approvedMeetingsLoadKey) {
+      return;
+    }
+
+    decisionsLoadKeyRef.current = approvedMeetingsLoadKey;
 
     let isMounted = true;
 
     const loadDecisions = async () => {
       try {
         if (!isMounted) return;
-        console.log('[Decisions] Starting decision load effect');
         await loadProjectDecisions(projectMeetings);
       } catch (error) {
         console.error('[Decisions] Error in loadDecisions:', error);
@@ -210,7 +300,11 @@ export function ProjectView() {
     return () => {
       isMounted = false;
     };
-  }, [projectId, project, projectMeetings]);
+  }, [activeTab, projectId, projectMeetings]);
+
+  useEffect(() => {
+    decisionsLoadKeyRef.current = null;
+  }, [projectId]);
 
   useEffect(() => {
     attemptedProjectLoadRef.current = null;
@@ -308,6 +402,17 @@ export function ProjectView() {
       default:
         return 'scheduled';
     }
+  };
+
+  const safeDateLabel = (value?: string) => {
+    if (!value) return 'N/A';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'N/A';
+    return parsed.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
   };
   
   // Sort meetings by date (most recent first)
@@ -441,16 +546,12 @@ export function ProjectView() {
                                 </span>
                               </div>
                               
-                              {decision.approvedAt && (
+                              {decision.approvedBy && (
                                 <div className="flex items-center gap-2 text-gray-600">
                                   <Clock className="w-4 h-4" />
                                   <span>
-                                    Approved: <span className="font-medium text-gray-900">
-                                      {new Date(decision.approvedAt).toLocaleDateString([], { 
-                                        month: 'short', 
-                                        day: 'numeric', 
-                                        year: 'numeric' 
-                                      })}
+                                    Approved by: <span className="font-medium text-gray-900">
+                                      {decision.approvedBy}
                                     </span>
                                   </span>
                                 </div>
@@ -547,16 +648,42 @@ export function ProjectView() {
                         </div>
 
                         {/* Actions */}
-                        <div className="flex gap-2 pt-4 border-t border-gray-200">
+                        <div className="flex gap-2 pt-4 border-t border-gray-200 flex-wrap">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => navigate(normalizedStatus === 'scheduled' ? `/meeting-transcript/${meeting.id}` : `/meetings/${meeting.id}`)}
-                            className="flex-1"
+                            className="flex-1 min-w-[120px]"
                           >
                             <FileText className="w-4 h-4 mr-2" />
                             View
                           </Button>
+                          {normalizedStatus === 'scheduled' && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openRescheduleDialog(meeting);
+                                }}
+                                className="flex-1 min-w-[120px]"
+                              >
+                                Reschedule
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRemoveMeeting(meeting);
+                                }}
+                                className="flex-1 min-w-[120px] text-red-700 border-red-300"
+                              >
+                                Remove
+                              </Button>
+                            </>
+                          )}
                           {(() => {
                             const meetingChanges = allChanges.filter(c => c.meetingId === meeting.id);
                             return meetingChanges.length > 0 ? (
@@ -567,7 +694,7 @@ export function ProjectView() {
                                   e.stopPropagation();
                                   navigate(`/meetings/${meeting.id}/changes`);
                                 }}
-                                className="flex-1"
+                                className="flex-1 min-w-[120px]"
                               >
                                 <ListChecks className="w-4 h-4 mr-2" />
                                 Changes ({meetingChanges.length})
@@ -591,6 +718,48 @@ export function ProjectView() {
         open={!!selectedChange}
         onClose={() => setSelectedChange(null)}
       />
+
+      <Dialog open={!!rescheduleMeeting} onOpenChange={(open) => { if (!open) setRescheduleMeeting(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reschedule Meeting</DialogTitle>
+            <DialogDescription>
+              Update date and time for {rescheduleMeeting?.title || 'this meeting'}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm font-medium text-gray-700">Date</label>
+              <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} min={new Date().toISOString().split('T')[0]} />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Time</label>
+              <Input type="time" value={rescheduleTime} onChange={(e) => setRescheduleTime(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRescheduleMeeting(null)} disabled={isUpdatingMeeting}>Cancel</Button>
+            <Button onClick={() => void handleRescheduleMeeting()} disabled={isUpdatingMeeting}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!removeMeeting} onOpenChange={(open) => { if (!open) setRemoveMeeting(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Scheduled Meeting?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove {removeMeeting?.title || 'this meeting'}. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUpdatingMeeting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleRemoveMeeting()} className="bg-red-600 hover:bg-red-700" disabled={isUpdatingMeeting}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

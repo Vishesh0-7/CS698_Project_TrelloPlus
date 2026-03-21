@@ -6,7 +6,6 @@ import com.flowboard.repository.UserRepository;
 import com.flowboard.service.ChangeApplicationService;
 import com.flowboard.service.ChangeApprovalService;
 import com.flowboard.service.ChangePreviewService;
-import com.flowboard.service.JWTService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,12 +21,11 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/changes")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(originPatterns = "http://localhost:*")
 public class ChangeController {
     private final ChangePreviewService changePreviewService;
     private final ChangeApprovalService changeApprovalService;
     private final ChangeApplicationService changeApplicationService;
-    private final JWTService jwtService;
     private final UserRepository userRepository;
 
     @GetMapping
@@ -90,10 +88,9 @@ public class ChangeController {
 
     @PostMapping("/{id}/apply")
     public ResponseEntity<ChangeApplyResultDTO> apply(
-        @PathVariable UUID id,
-        @RequestHeader("Authorization") String authHeader
+        @PathVariable UUID id
     ) {
-        User actor = getCurrentUserFromHeader(authHeader);
+        User actor = getCurrentUser();
         return ResponseEntity.ok(changeApplicationService.applyChange(id, actor));
     }
 
@@ -113,9 +110,4 @@ public class ChangeController {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
 
-    private User getCurrentUserFromHeader(String authHeader) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        return userRepository.findById(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
-    }
 }

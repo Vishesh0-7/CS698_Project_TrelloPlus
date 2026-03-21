@@ -10,6 +10,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -18,7 +20,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/approvals")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(originPatterns = "http://localhost:*")
 public class ApprovalSummaryController {
     private final ApprovalService approvalService;
     private final JWTService jwtService;
@@ -31,7 +33,7 @@ public class ApprovalSummaryController {
     @PostMapping("/summary/{meetingId}")
     public ResponseEntity<Void> submitApproval(
         @PathVariable UUID meetingId,
-        @RequestHeader("Authorization") String authHeader,
+        @RequestHeader(value = "Authorization", required = false) String authHeader,
         @Valid @RequestBody SubmitApprovalRequest request
     ) {
         User currentUser = getCurrentUser(authHeader);
@@ -46,7 +48,7 @@ public class ApprovalSummaryController {
     @PostMapping("/items/action-items/{itemId}/approve")
     public ResponseEntity<Void> approveActionItem(
         @PathVariable UUID itemId,
-        @RequestHeader("Authorization") String authHeader
+        @RequestHeader(value = "Authorization", required = false) String authHeader
     ) {
         User currentUser = getCurrentUser(authHeader);
         approvalService.approveActionItem(itemId, currentUser);
@@ -60,7 +62,7 @@ public class ApprovalSummaryController {
     @PostMapping("/items/decisions/{itemId}/approve")
     public ResponseEntity<Void> approveDecision(
         @PathVariable UUID itemId,
-        @RequestHeader("Authorization") String authHeader
+        @RequestHeader(value = "Authorization", required = false) String authHeader
     ) {
         User currentUser = getCurrentUser(authHeader);
         approvalService.approveDecision(itemId, currentUser);
@@ -101,8 +103,22 @@ public class ApprovalSummaryController {
      * Extract current user from security context
      */
     private User getCurrentUser(String authHeader) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        return userRepository.findById(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        if (authHeader != null && !authHeader.isBlank()) {
+            UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+            return userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof User principalUser) {
+            return principalUser;
+        }
+
+        if (authentication != null && authentication.getName() != null) {
+            return userRepository.findByEmailIgnoreCase(authentication.getName())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        }
+
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing authentication");
     }
 }

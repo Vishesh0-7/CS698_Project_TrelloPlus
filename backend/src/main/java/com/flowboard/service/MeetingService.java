@@ -2,6 +2,7 @@ package com.flowboard.service;
 
 import com.flowboard.dto.CreateMeetingRequest;
 import com.flowboard.dto.MeetingDTO;
+import com.flowboard.dto.UpdateMeetingRequest;
 import com.flowboard.dto.UserDTO;
 import com.flowboard.entity.*;
 import com.flowboard.repository.*;
@@ -11,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -40,6 +43,12 @@ public class MeetingService {
 
         if (!isProjectMember) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        }
+
+        LocalTime effectiveMeetingTime = request.getMeetingTime() != null ? request.getMeetingTime() : LocalTime.MIDNIGHT;
+        LocalDateTime scheduledAt = request.getMeetingDate().atTime(effectiveMeetingTime);
+        if (scheduledAt.isBefore(LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting cannot be scheduled in the past");
         }
 
         // Create meeting
@@ -142,6 +151,62 @@ public class MeetingService {
         
         meeting = meetingRepository.save(meeting);
         return convertToDTO(meeting);
+    }
+
+    /**
+     * Update a scheduled meeting details (e.g., reschedule)
+     */
+    public MeetingDTO updateMeeting(UUID meetingId, UpdateMeetingRequest request, User actor) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        if (meeting.getStatus() != Meeting.MeetingStatus.SCHEDULED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only scheduled meetings can be edited");
+        }
+
+        UUID projectId = meeting.getProject().getId();
+        boolean isProjectMember = meeting.getProject().getOwner().getId().equals(actor.getId())
+            || projectMemberRepository.findMemberRole(projectId, actor.getId()).isPresent();
+        if (!isProjectMember) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        }
+
+        LocalTime effectiveTime = request.getMeetingTime() != null ? request.getMeetingTime() : LocalTime.MIDNIGHT;
+        LocalDateTime scheduledAt = request.getMeetingDate().atTime(effectiveTime);
+        if (scheduledAt.isBefore(LocalDateTime.now())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting cannot be scheduled in the past");
+        }
+
+        meeting.setTitle(request.getTitle());
+        meeting.setDescription(request.getDescription());
+        meeting.setMeetingDate(request.getMeetingDate());
+        meeting.setMeetingTime(request.getMeetingTime());
+        meeting.setPlatform(request.getPlatform());
+        meeting.setMeetingLink(request.getMeetingLink());
+
+        meeting = meetingRepository.save(meeting);
+        return convertToDTO(meeting);
+    }
+
+    /**
+     * Delete a scheduled meeting
+     */
+    public void deleteMeeting(UUID meetingId, User actor) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        if (meeting.getStatus() != Meeting.MeetingStatus.SCHEDULED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only scheduled meetings can be removed");
+        }
+
+        UUID projectId = meeting.getProject().getId();
+        boolean isProjectMember = meeting.getProject().getOwner().getId().equals(actor.getId())
+            || projectMemberRepository.findMemberRole(projectId, actor.getId()).isPresent();
+        if (!isProjectMember) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        }
+
+        meetingRepository.delete(meeting);
     }
 
     /**

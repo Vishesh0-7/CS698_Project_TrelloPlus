@@ -8,6 +8,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
 import { apiService, mapProjectResponseToProject, type MeetingResponse } from '../services/api';
 import { toast } from 'sonner';
+import { CheckCircle2 } from 'lucide-react';
 
 const changeTypeConfig: Record<string, { label: string; color: string }> = {
   MOVE_CARD: { label: 'Move Card', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -23,6 +24,8 @@ export function MeetingChanges() {
   const [changes, setChanges] = useState<ChangeRequest[]>([]);
   const [selectedChange, setSelectedChange] = useState<ChangeRequest | null>(null);
   const [applyingChangeId, setApplyingChangeId] = useState<string | null>(null);
+  const [appliedSuccessChangeId, setAppliedSuccessChangeId] = useState<string | null>(null);
+  const [canApplyChanges, setCanApplyChanges] = useState(false);
   const setProjects = useProjectStore((s) => s.setProjects);
 
   const refreshMeetingChanges = async (activeMeetingId: string) => {
@@ -100,6 +103,10 @@ export function MeetingChanges() {
         if (!isMounted) return;
 
         setMeeting(meetingData);
+        const storedUser = localStorage.getItem('user');
+        const currentUserId = storedUser ? JSON.parse(storedUser)?.id : null;
+        const owner = (await apiService.getProject(meetingData.projectId)).members.find((member) => member.role.toLowerCase() === 'owner');
+        setCanApplyChanges(Boolean(currentUserId && owner?.id === currentUserId));
         setChanges(
           changeData.map((c) => {
             let before: any;
@@ -162,6 +169,7 @@ export function MeetingChanges() {
         refreshMeetingChanges(meetingId),
         refreshProjectBoardState(meeting.projectId),
       ]);
+      setAppliedSuccessChangeId(changeId);
 
       toast.success(result.message || 'Change applied to board');
     } catch (error) {
@@ -182,8 +190,8 @@ export function MeetingChanges() {
       case 'UPDATE_CARD':
         return `Update card: ${title}`;
       case 'MOVE_CARD':
-        const from = (change.before as any)?.columnId || 'Unknown';
-        const to = (change.after as any)?.columnId || 'Unknown';
+        const from = (change.before as any)?.columnTitle || (change.before as any)?.stageTitle || 'previous column';
+        const to = (change.after as any)?.columnTitle || (change.after as any)?.stageTitle || 'new column';
         return `Move card: ${title} (${from} → ${to})`;
       default:
         return title;
@@ -206,11 +214,11 @@ export function MeetingChanges() {
         <div className="mb-8">
           <Button
             variant="ghost"
-            onClick={() => navigate(`/project/${meeting.projectId}?tab=meetings`)}
+            onClick={() => navigate(`/meetings/${meeting.id}`)}
             className="mb-4 -ml-2"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Meetings
+            Back to Meeting Details
           </Button>
           
           <div>
@@ -261,15 +269,23 @@ export function MeetingChanges() {
                         e.stopPropagation();
                         void handleApplyToBoard(change.id);
                       }}
-                      disabled={change.status === 'APPLIED' || applyingChangeId === change.id}
+                      disabled={!canApplyChanges || change.status === 'APPLIED' || applyingChangeId === change.id}
                     >
-                      {change.status === 'APPLIED'
+                      {change.status === 'APPLIED' || appliedSuccessChangeId === change.id
                         ? 'Applied'
                         : applyingChangeId === change.id
                         ? 'Applying...'
-                        : 'Apply to Board'}
+                        : canApplyChanges
+                        ? 'Apply to Board'
+                        : 'Read Only'}
                     </Button>
                   </div>
+                  {appliedSuccessChangeId === change.id && (
+                    <p className="mt-3 text-sm text-green-700 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Applied successfully and synced with board state.
+                    </p>
+                  )}
                 </div>
               );
             })}

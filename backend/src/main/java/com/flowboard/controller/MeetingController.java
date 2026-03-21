@@ -4,15 +4,17 @@ import com.flowboard.dto.AddMeetingMemberRequest;
 import com.flowboard.dto.CreateMeetingRequest;
 import com.flowboard.dto.EndMeetingRequest;
 import com.flowboard.dto.MeetingDTO;
+import com.flowboard.dto.UpdateMeetingRequest;
 import com.flowboard.entity.User;
 import com.flowboard.repository.UserRepository;
 import com.flowboard.service.JWTService;
 import com.flowboard.service.MeetingService;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -23,7 +25,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/meetings")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(originPatterns = "http://localhost:*")
 public class MeetingController {
     private final MeetingService meetingService;
     private final JWTService jwtService;
@@ -36,11 +38,9 @@ public class MeetingController {
     @PostMapping
     public ResponseEntity<MeetingDTO> createMeeting(
         @Valid @RequestBody CreateMeetingRequest request,
-        @RequestHeader("Authorization") String authHeader
+        @RequestHeader(value = "Authorization", required = false) String authHeader
     ) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        User currentUser = userRepository.findById(userId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        User currentUser = resolveCurrentUser(authHeader);
         MeetingDTO meeting = meetingService.createMeeting(request, currentUser);
         return ResponseEntity.status(HttpStatus.CREATED).body(meeting);
     }
@@ -76,6 +76,35 @@ public class MeetingController {
     ) {
         MeetingDTO meeting = meetingService.endMeeting(id, request.getTranscript());
         return ResponseEntity.ok(meeting);
+    }
+
+    /**
+     * Update a scheduled meeting (reschedule/edit details)
+     * PUT /api/v1/meetings/{id}
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<MeetingDTO> updateMeeting(
+        @PathVariable UUID id,
+        @Valid @RequestBody UpdateMeetingRequest request,
+        @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        User currentUser = resolveCurrentUser(authHeader);
+        MeetingDTO meeting = meetingService.updateMeeting(id, request, currentUser);
+        return ResponseEntity.ok(meeting);
+    }
+
+    /**
+     * Delete a scheduled meeting
+     * DELETE /api/v1/meetings/{id}
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteMeeting(
+        @PathVariable UUID id,
+        @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        User currentUser = resolveCurrentUser(authHeader);
+        meetingService.deleteMeeting(id, currentUser);
+        return ResponseEntity.noContent().build();
     }
 
     /**
@@ -115,6 +144,26 @@ public class MeetingController {
             .map(u -> u.getUsername())
             .collect(Collectors.toList());
         return ResponseEntity.ok(memberNames);
+    }
+
+    private User resolveCurrentUser(String authHeader) {
+        if (authHeader != null && !authHeader.isBlank()) {
+            UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+            return userRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof User principalUser) {
+            return principalUser;
+        }
+
+        if (authentication != null && authentication.getName() != null) {
+            return userRepository.findByEmailIgnoreCase(authentication.getName())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        }
+
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing authentication");
     }
 
 }

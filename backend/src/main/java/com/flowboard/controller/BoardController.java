@@ -15,7 +15,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/boards")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(originPatterns = "http://localhost:*")
 public class BoardController {
     private final ProjectService projectService;
     private final JWTService jwtService;

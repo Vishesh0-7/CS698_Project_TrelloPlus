@@ -33,7 +33,7 @@ public class ChangeApplicationService {
         Change change = changeRepository.findById(changeId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Change not found"));
 
-        ensureProjectEditor(change.getMeeting().getProject().getId(), actor.getId());
+        ensureProjectOwner(change.getMeeting().getProject().getId(), actor.getId());
 
         // Allow mocked/generated changes (PENDING/UNDER_REVIEW) to be applied directly for now.
         // This keeps the flow LLM-ready while supporting current mock data generation.
@@ -87,12 +87,12 @@ public class ChangeApplicationService {
         }
     }
 
-    private void ensureProjectEditor(UUID projectId, UUID userId) {
+    private void ensureProjectOwner(UUID projectId, UUID userId) {
         String role = projectMemberRepository.findMemberRole(projectId, userId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a project member"));
 
-        if (!("owner".equalsIgnoreCase(role) || "editor".equalsIgnoreCase(role))) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner/editor can apply changes");
+        if (!"owner".equalsIgnoreCase(role)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the project owner can apply changes");
         }
     }
 
