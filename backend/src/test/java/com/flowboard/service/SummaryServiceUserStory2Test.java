@@ -125,6 +125,7 @@ class SummaryServiceUserStory2Test {
         mockAnalysis.addDecision("Use Spring Boot for backend", "Team consensus");
 
         when(meetingRepository.findById(meetingId)).thenReturn(Optional.of(testMeeting));
+        when(meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)).thenReturn(true);
         when(aiEngine.analyzeMeetingTranscript(testMeeting.getTranscript())).thenReturn(mockAnalysis);
         when(meetingSummaryRepository.save(any(MeetingSummary.class)))
             .thenAnswer(i -> {
@@ -153,7 +154,7 @@ class SummaryServiceUserStory2Test {
                 return req;
             });
 
-        MeetingSummaryDTO result = summaryService.generateSummary(meetingId);
+        MeetingSummaryDTO result = summaryService.generateSummary(meetingId, userId);
 
         assertThat(result).isNotNull();
         assertThat(result.getStatus()).isEqualTo("PENDING");
@@ -165,6 +166,7 @@ class SummaryServiceUserStory2Test {
     @Test
     void getSummary_withValidId_returnsSummary() {
         UUID summaryId = UUID.randomUUID();
+        UUID userId = testUser.getId();
         MeetingSummary summary = MeetingSummary.builder()
             .id(summaryId)
             .meeting(testMeeting)
@@ -173,11 +175,12 @@ class SummaryServiceUserStory2Test {
             .build();
 
         when(meetingSummaryRepository.findById(summaryId)).thenReturn(Optional.of(summary));
+        when(meetingMemberRepository.existsByMeetingIdAndUserId(testMeeting.getId(), userId)).thenReturn(true);
         when(actionItemRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
         when(decisionRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
         when(changeRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
 
-        MeetingSummaryDTO result = summaryService.getSummary(summaryId);
+        MeetingSummaryDTO result = summaryService.getSummary(summaryId, userId);
 
         assertThat(result).isNotNull();
         assertThat(result.getId()).isEqualTo(summaryId);
@@ -187,6 +190,7 @@ class SummaryServiceUserStory2Test {
     @Test
     void getSummaryByMeeting_withValidMeetingId_returnsSummary() {
         UUID meetingId = testMeeting.getId();
+        UUID userId = testUser.getId();
         MeetingSummary summary = MeetingSummary.builder()
             .id(UUID.randomUUID())
             .meeting(testMeeting)
@@ -194,11 +198,12 @@ class SummaryServiceUserStory2Test {
             .build();
 
         when(meetingSummaryRepository.findByMeetingId(meetingId)).thenReturn(Optional.of(summary));
+        when(meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)).thenReturn(true);
         when(actionItemRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
         when(decisionRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
         when(changeRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
 
-        MeetingSummaryDTO result = summaryService.getSummaryByMeeting(meetingId);
+        MeetingSummaryDTO result = summaryService.getSummaryByMeeting(meetingId, userId);
 
         assertThat(result).isNotNull();
         assertThat(result.getStatus()).isEqualTo("APPROVED");

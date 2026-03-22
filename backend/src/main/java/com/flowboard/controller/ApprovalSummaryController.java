@@ -10,8 +10,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -33,7 +31,7 @@ public class ApprovalSummaryController {
     @PostMapping("/summary/{meetingId}")
     public ResponseEntity<Void> submitApproval(
         @PathVariable UUID meetingId,
-        @RequestHeader(value = "Authorization", required = false) String authHeader,
+        @RequestHeader("Authorization") String authHeader,
         @Valid @RequestBody SubmitApprovalRequest request
     ) {
         User currentUser = getCurrentUser(authHeader);
@@ -48,7 +46,7 @@ public class ApprovalSummaryController {
     @PostMapping("/items/action-items/{itemId}/approve")
     public ResponseEntity<Void> approveActionItem(
         @PathVariable UUID itemId,
-        @RequestHeader(value = "Authorization", required = false) String authHeader
+        @RequestHeader("Authorization") String authHeader
     ) {
         User currentUser = getCurrentUser(authHeader);
         approvalService.approveActionItem(itemId, currentUser);
@@ -62,7 +60,7 @@ public class ApprovalSummaryController {
     @PostMapping("/items/decisions/{itemId}/approve")
     public ResponseEntity<Void> approveDecision(
         @PathVariable UUID itemId,
-        @RequestHeader(value = "Authorization", required = false) String authHeader
+        @RequestHeader("Authorization") String authHeader
     ) {
         User currentUser = getCurrentUser(authHeader);
         approvalService.approveDecision(itemId, currentUser);
@@ -74,8 +72,12 @@ public class ApprovalSummaryController {
      * GET /api/v1/approvals/summary/{meetingId}
      */
     @GetMapping("/summary/{meetingId}")
-    public ResponseEntity<ApprovalStatusDTO> getApprovalStatus(@PathVariable UUID meetingId) {
-        ApprovalStatusDTO status = approvalService.getApprovalStatus(meetingId);
+    public ResponseEntity<ApprovalStatusDTO> getApprovalStatus(
+        @PathVariable UUID meetingId,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        ApprovalStatusDTO status = approvalService.getApprovalStatus(meetingId, userId);
         return ResponseEntity.ok(status);
     }
 
@@ -84,8 +86,12 @@ public class ApprovalSummaryController {
      * GET /api/v1/approvals/summary/{meetingId}/approved
      */
     @GetMapping("/summary/{meetingId}/approved")
-    public ResponseEntity<Boolean> isMeetingApproved(@PathVariable UUID meetingId) {
-        boolean approved = approvalService.isMeetingApproved(meetingId);
+    public ResponseEntity<Boolean> isMeetingApproved(
+        @PathVariable UUID meetingId,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        boolean approved = approvalService.isMeetingApproved(meetingId, userId);
         return ResponseEntity.ok(approved);
     }
 
@@ -94,31 +100,18 @@ public class ApprovalSummaryController {
      * GET /api/v1/approvals/summary/{meetingId}/all-submitted
      */
     @GetMapping("/summary/{meetingId}/all-submitted")
-    public ResponseEntity<Boolean> hasAllApprovalsSubmitted(@PathVariable UUID meetingId) {
-        boolean submitted = approvalService.hasAllApprovalsSubmitted(meetingId);
+    public ResponseEntity<Boolean> hasAllApprovalsSubmitted(
+        @PathVariable UUID meetingId,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        boolean submitted = approvalService.hasAllApprovalsSubmitted(meetingId, userId);
         return ResponseEntity.ok(submitted);
     }
 
-    /**
-     * Extract current user from security context
-     */
     private User getCurrentUser(String authHeader) {
-        if (authHeader != null && !authHeader.isBlank()) {
-            UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-            return userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
-        }
-
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof User principalUser) {
-            return principalUser;
-        }
-
-        if (authentication != null && authentication.getName() != null) {
-            return userRepository.findByEmailIgnoreCase(authentication.getName())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
-        }
-
-        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing authentication");
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return userRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
 }

@@ -25,6 +25,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -122,8 +123,6 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void createMeeting_withValidRequest_returnsCreatedMeeting() throws Exception {
-        authenticateAsTestUser();
-
         CreateMeetingRequest request = CreateMeetingRequest.builder()
             .title("Sprint Planning")
             .description("Q1 Sprint Planning Meeting")
@@ -134,10 +133,13 @@ class MeetingUserStory2ApiTest {
             .meetingLink("https://zoom.us/j/123456")
             .build();
 
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
         when(meetingService.createMeeting(any(CreateMeetingRequest.class), any(User.class)))
             .thenReturn(testMeeting);
 
         MvcResult result = mockMvc.perform(post("/meetings")
+            .header("Authorization", "Bearer valid-token")
             .contentType(MediaType.APPLICATION_JSON)
             .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isCreated())
@@ -152,9 +154,11 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void getMeeting_withValidId_returnsMeeting() throws Exception {
-        when(meetingService.getMeeting(meetingId)).thenReturn(testMeeting);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(meetingService.getMeeting(meetingId, userId)).thenReturn(testMeeting);
 
-        mockMvc.perform(get("/meetings/{id}", meetingId))
+        mockMvc.perform(get("/meetings/{id}", meetingId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.id").value(meetingId.toString()))
             .andExpect(jsonPath("$.title").value("Sprint Planning"))
@@ -163,10 +167,12 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void getMeetingsByProject_withValidProjectId_returnsMeetingList() throws Exception {
-        when(meetingService.getMeetingsByProject(projectId))
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(meetingService.getMeetingsByProject(projectId, userId))
             .thenReturn(Arrays.asList(testMeeting));
 
-        mockMvc.perform(get("/meetings/project/{projectId}", projectId))
+        mockMvc.perform(get("/meetings/project/{projectId}", projectId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].id").value(meetingId.toString()))
             .andExpect(jsonPath("$[0].projectId").value(projectId.toString()));
@@ -189,10 +195,12 @@ class MeetingUserStory2ApiTest {
             .createdAt(LocalDateTime.now())
             .build();
 
-        when(meetingService.endMeeting(meetingId, request.getTranscript()))
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(meetingService.endMeeting(meetingId, request.getTranscript(), userId))
             .thenReturn(updatedMeeting);
 
         mockMvc.perform(post("/meetings/{id}/end", meetingId)
+            .header("Authorization", "Bearer valid-token")
             .contentType(MediaType.APPLICATION_JSON)
             .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
@@ -207,7 +215,10 @@ class MeetingUserStory2ApiTest {
             .userId(newMemberId)
             .build();
 
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+
         mockMvc.perform(post("/meetings/{id}/members", meetingId)
+            .header("Authorization", "Bearer valid-token")
             .contentType(MediaType.APPLICATION_JSON)
             .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isCreated());
@@ -215,7 +226,10 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void removeMeetingMember_withValidUserId_succeeds() throws Exception {
-        mockMvc.perform(delete("/meetings/{id}/members/{userId}", meetingId, userId))
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+
+        mockMvc.perform(delete("/meetings/{id}/members/{userId}", meetingId, userId)
+            .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isNoContent());
     }
 
@@ -249,9 +263,11 @@ class MeetingUserStory2ApiTest {
             ))
             .build();
 
-        when(summaryService.generateSummary(meetingId)).thenReturn(summary);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(summaryService.generateSummary(meetingId, userId)).thenReturn(summary);
 
         mockMvc.perform(post("/summaries")
+            .header("Authorization", "Bearer valid-token")
             .contentType(MediaType.APPLICATION_JSON)
             .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isCreated())
@@ -269,9 +285,11 @@ class MeetingUserStory2ApiTest {
             .generatedAt(LocalDateTime.now())
             .build();
 
-        when(summaryService.getSummary(summaryId)).thenReturn(summary);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(summaryService.getSummary(summaryId, userId)).thenReturn(summary);
 
-        mockMvc.perform(get("/summaries/{id}", summaryId))
+        mockMvc.perform(get("/summaries/{id}", summaryId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.id").value(summaryId.toString()))
             .andExpect(jsonPath("$.meetingId").value(meetingId.toString()));
@@ -279,15 +297,17 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void submitApproval_withValidResponse_succeeds() throws Exception {
-        authenticateAsTestUser();
-
         SubmitApprovalRequest request = SubmitApprovalRequest.builder()
             .meetingId(meetingId)
             .response("APPROVED")
             .comments("Looks good to me")
             .build();
 
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
         mockMvc.perform(post("/approvals/summary/{meetingId}", meetingId)
+            .header("Authorization", "Bearer valid-token")
             .contentType(MediaType.APPLICATION_JSON)
             .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk());
@@ -310,9 +330,11 @@ class MeetingUserStory2ApiTest {
             ))
             .build();
 
-        when(approvalService.getApprovalStatus(meetingId)).thenReturn(status);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(approvalService.getApprovalStatus(meetingId, userId)).thenReturn(status);
 
-        mockMvc.perform(get("/approvals/summary/{meetingId}", meetingId))
+        mockMvc.perform(get("/approvals/summary/{meetingId}", meetingId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.meetingId").value(meetingId.toString()))
             .andExpect(jsonPath("$.requiredApprovals").value(3))
@@ -321,18 +343,22 @@ class MeetingUserStory2ApiTest {
 
     @Test
     void isMeetingApproved_returnsTrueWhenApproved() throws Exception {
-        when(approvalService.isMeetingApproved(meetingId)).thenReturn(true);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(approvalService.isMeetingApproved(meetingId, userId)).thenReturn(true);
 
-        mockMvc.perform(get("/approvals/summary/{meetingId}/approved", meetingId))
+        mockMvc.perform(get("/approvals/summary/{meetingId}/approved", meetingId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(content().string("true"));
     }
 
     @Test
     void hasAllApprovalsSubmitted_returnsTrueWhenAllSubmitted() throws Exception {
-        when(approvalService.hasAllApprovalsSubmitted(meetingId)).thenReturn(true);
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
+        when(approvalService.hasAllApprovalsSubmitted(meetingId, userId)).thenReturn(true);
 
-        mockMvc.perform(get("/approvals/summary/{meetingId}/all-submitted", meetingId))
+        mockMvc.perform(get("/approvals/summary/{meetingId}/all-submitted", meetingId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(content().string("true"));
     }

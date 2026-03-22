@@ -6,6 +6,7 @@ import com.flowboard.repository.UserRepository;
 import com.flowboard.service.ChangeApplicationService;
 import com.flowboard.service.ChangeApprovalService;
 import com.flowboard.service.ChangePreviewService;
+import com.flowboard.service.JWTService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -26,30 +27,45 @@ public class ChangeController {
     private final ChangePreviewService changePreviewService;
     private final ChangeApprovalService changeApprovalService;
     private final ChangeApplicationService changeApplicationService;
+    private final JWTService jwtService;
     private final UserRepository userRepository;
 
     @GetMapping
     public ResponseEntity<List<ChangeDTO>> listChanges(
         @RequestParam(required = false) UUID meetingId,
         @RequestParam(required = false) UUID projectId,
-        @RequestParam(required = false) String status
+        @RequestParam(required = false) String status,
+        @RequestHeader("Authorization") String authHeader
     ) {
-        return ResponseEntity.ok(changePreviewService.listChanges(meetingId, projectId, status));
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(changePreviewService.listChanges(meetingId, projectId, status, userId));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ChangeDTO> getChange(@PathVariable UUID id) {
-        return ResponseEntity.ok(changePreviewService.getChange(id));
+    public ResponseEntity<ChangeDTO> getChange(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(changePreviewService.getChange(id, userId));
     }
 
     @GetMapping("/{id}/diff")
-    public ResponseEntity<ChangeDiffDTO> getDiff(@PathVariable UUID id) {
-        return ResponseEntity.ok(changePreviewService.getDiff(id));
+    public ResponseEntity<ChangeDiffDTO> getDiff(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(changePreviewService.getDiff(id, userId));
     }
 
     @GetMapping("/{id}/impact")
-    public ResponseEntity<ChangeImpactDTO> getImpact(@PathVariable UUID id) {
-        return ResponseEntity.ok(changePreviewService.getImpact(id));
+    public ResponseEntity<ChangeImpactDTO> getImpact(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(changePreviewService.getImpact(id, userId));
     }
 
     @PostMapping("/{id}/approve")
@@ -95,8 +111,12 @@ public class ChangeController {
     }
 
     @GetMapping("/{id}/history")
-    public ResponseEntity<List<ChangeHistoryEntryDTO>> getHistory(@PathVariable UUID id) {
-        return ResponseEntity.ok(changePreviewService.getHistory(id));
+    public ResponseEntity<List<ChangeHistoryEntryDTO>> getHistory(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(changePreviewService.getHistory(id, userId));
     }
 
     private User getCurrentUser() {
@@ -109,5 +129,4 @@ public class ChangeController {
         return userRepository.findByEmailIgnoreCase(email)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
-
 }

@@ -7,6 +7,7 @@ import com.flowboard.repository.UserRepository;
 import com.flowboard.service.ChangeApplicationService;
 import com.flowboard.service.ChangeApprovalService;
 import com.flowboard.service.ChangePreviewService;
+import com.flowboard.service.JWTService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,27 +51,33 @@ class ChangeControllerUserStory3ApiTest {
     @MockBean
     private UserRepository userRepository;
 
+    @MockBean
+    private JWTService jwtService;
+
     private UUID changeId;
     private UUID meetingId;
+    private UUID userId;
 
     @BeforeEach
     void setUp() {
         changeId = UUID.randomUUID();
         meetingId = UUID.randomUUID();
+        userId = UUID.randomUUID();
 
         User user = User.builder()
-            .id(UUID.randomUUID())
+            .id(userId)
             .email("reviewer@example.com")
             .username("reviewer")
             .role(User.UserRole.MEMBER)
             .build();
 
         when(userRepository.findByEmailIgnoreCase("reviewer@example.com")).thenReturn(Optional.of(user));
+        when(jwtService.extractUserIdFromAuthHeader(any())).thenReturn(userId);
     }
 
     @Test
     void listChanges_returnsOk() throws Exception {
-        when(changePreviewService.listChanges(null, null, null))
+        when(changePreviewService.listChanges(eq(null), eq(null), eq(null), eq(userId)))
             .thenReturn(Collections.singletonList(ChangeDTO.builder()
                 .id(changeId)
                 .meetingId(meetingId)
@@ -79,14 +86,15 @@ class ChangeControllerUserStory3ApiTest {
                 .createdAt(LocalDateTime.now())
                 .build()));
 
-        mockMvc.perform(get("/changes"))
+        mockMvc.perform(get("/changes")
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].id").value(changeId.toString()));
     }
 
     @Test
     void getChange_returnsOk() throws Exception {
-        when(changePreviewService.getChange(changeId)).thenReturn(ChangeDTO.builder()
+        when(changePreviewService.getChange(changeId, userId)).thenReturn(ChangeDTO.builder()
             .id(changeId)
             .meetingId(meetingId)
             .changeType("MOVE_CARD")
@@ -94,20 +102,22 @@ class ChangeControllerUserStory3ApiTest {
             .createdAt(LocalDateTime.now())
             .build());
 
-        mockMvc.perform(get("/changes/{id}", changeId))
+        mockMvc.perform(get("/changes/{id}", changeId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.id").value(changeId.toString()));
     }
 
     @Test
     void getDiff_returnsOk() throws Exception {
-        when(changePreviewService.getDiff(changeId)).thenReturn(ChangeDiffDTO.builder()
+        when(changePreviewService.getDiff(changeId, userId)).thenReturn(ChangeDiffDTO.builder()
             .beforeState("{}")
             .afterState("{}")
             .summary("Card fields were updated")
             .build());
 
-        mockMvc.perform(get("/changes/{id}/diff", changeId))
+        mockMvc.perform(get("/changes/{id}/diff", changeId)
+                .header("Authorization", "Bearer valid-token"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.summary").exists());
     }

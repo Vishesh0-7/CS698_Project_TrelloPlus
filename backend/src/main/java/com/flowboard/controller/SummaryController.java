@@ -32,9 +32,11 @@ public class SummaryController {
      */
     @PostMapping
     public ResponseEntity<MeetingSummaryDTO> generateSummary(
-        @Valid @RequestBody GenerateSummaryRequest request
+        @Valid @RequestBody GenerateSummaryRequest request,
+        @RequestHeader("Authorization") String authHeader
     ) {
-        MeetingSummaryDTO summary = summaryService.generateSummary(request.getMeetingId());
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        MeetingSummaryDTO summary = summaryService.generateSummary(request.getMeetingId(), userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(summary);
     }
 
@@ -43,8 +45,12 @@ public class SummaryController {
      * GET /api/v1/summaries/{id}
      */
     @GetMapping("/{id}")
-    public ResponseEntity<MeetingSummaryDTO> getSummary(@PathVariable UUID id) {
-        MeetingSummaryDTO summary = summaryService.getSummary(id);
+    public ResponseEntity<MeetingSummaryDTO> getSummary(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        MeetingSummaryDTO summary = summaryService.getSummary(id, userId);
         return ResponseEntity.ok(summary);
     }
 
@@ -53,8 +59,12 @@ public class SummaryController {
      * GET /api/v1/meetings/{meetingId}/summary
      */
     @GetMapping("/meeting/{meetingId}")
-    public ResponseEntity<MeetingSummaryDTO> getSummaryByMeeting(@PathVariable UUID meetingId) {
-        MeetingSummaryDTO summary = summaryService.getSummaryByMeeting(meetingId);
+    public ResponseEntity<MeetingSummaryDTO> getSummaryByMeeting(
+        @PathVariable UUID meetingId,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        MeetingSummaryDTO summary = summaryService.getSummaryByMeeting(meetingId, userId);
         return ResponseEntity.ok(summary);
     }
 

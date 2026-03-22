@@ -48,11 +48,17 @@ public class SummaryService {
      * Generates summary from meeting transcript using AI analysis
      * Creates action items, decisions, and changes
      * Initiates approval workflow for the summary
+     * Verifies user is meeting member
      */
-    public MeetingSummaryDTO generateSummary(UUID meetingId) {
+    public MeetingSummaryDTO generateSummary(UUID meetingId, UUID userId) {
         log.info("Generating summary for meeting: {}", meetingId);
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        // Verify user is a meeting member
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
 
         if (meeting.getTranscript() == null || meeting.getTranscript().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting has no transcript");
@@ -179,20 +185,33 @@ public class SummaryService {
     }
 
     /**
-     * Get meeting summary
+     * Get meeting summary - verifies user is meeting member
      */
-    public MeetingSummaryDTO getSummary(UUID summaryId) {
+    public MeetingSummaryDTO getSummary(UUID summaryId, UUID userId) {
         MeetingSummary summary = meetingSummaryRepository.findById(summaryId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Summary not found"));
+
+        // Verify user is a member of the meeting
+        UUID meetingId = summary.getMeeting().getId();
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+
         return convertToDTO(summary);
     }
 
     /**
-     * Get summary for a meeting
+     * Get summary for a meeting - verifies user is meeting member
      */
-    public MeetingSummaryDTO getSummaryByMeeting(UUID meetingId) {
+    public MeetingSummaryDTO getSummaryByMeeting(UUID meetingId, UUID userId) {
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
+
+        // Verify user is a member of the meeting
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+
         return convertToDTO(summary);
     }
 

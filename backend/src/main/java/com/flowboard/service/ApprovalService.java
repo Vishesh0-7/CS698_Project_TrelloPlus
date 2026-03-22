@@ -74,11 +74,16 @@ public class ApprovalService {
     }
 
     /**
-     * Get approval status for a meeting
+     * Get approval status for a meeting - verifies user is meeting member
      */
-    public ApprovalStatusDTO getApprovalStatus(UUID meetingId) {
-        meetingRepository.findById(meetingId)
+    public ApprovalStatusDTO getApprovalStatus(UUID meetingId, UUID userId) {
+        Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        // Verify user is a meeting member
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
 
         ApprovalRequestSummary approvalRequest = approvalRequestRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No approval request for this meeting"));
@@ -162,19 +167,32 @@ public class ApprovalService {
     }
 
     /**
-     * Check if a meeting has been fully approved
+     * Check if a meeting has been fully approved - verifies user is meeting member
      */
-    public boolean isMeetingApproved(UUID meetingId) {
+    public boolean isMeetingApproved(UUID meetingId, UUID userId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        // Verify user is a meeting member
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
         
         return meeting.getStatus() == Meeting.MeetingStatus.APPROVED;
     }
 
     /**
-     * Check if all required approvals have been submitted
+     * Check if all required approvals have been submitted - verifies user is meeting member
      */
-    public boolean hasAllApprovalsSubmitted(UUID meetingId) {
+    public boolean hasAllApprovalsSubmitted(UUID meetingId, UUID userId) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
+
+        // Verify user is a meeting member
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+
         ApprovalRequestSummary approvalRequest = approvalRequestRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No approval request for this meeting"));
 

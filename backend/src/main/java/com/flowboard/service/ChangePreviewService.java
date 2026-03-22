@@ -3,8 +3,11 @@ package com.flowboard.service;
 import com.flowboard.dto.*;
 import com.flowboard.entity.Change;
 import com.flowboard.entity.ChangeAuditEntry;
+import com.flowboard.entity.Meeting;
 import com.flowboard.repository.ChangeAuditEntryRepository;
 import com.flowboard.repository.ChangeRepository;
+import com.flowboard.repository.MeetingMemberRepository;
+import com.flowboard.repository.ProjectMemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,33 +25,47 @@ import java.util.stream.Collectors;
 public class ChangePreviewService {
     private final ChangeRepository changeRepository;
     private final ChangeAuditEntryRepository changeAuditEntryRepository;
+    private final MeetingMemberRepository meetingMemberRepository;
+    private final ProjectMemberRepository projectMemberRepository;
 
-    public List<ChangeDTO> listChanges(UUID meetingId, UUID projectId, String status) {
+    public List<ChangeDTO> listChanges(UUID meetingId, UUID projectId, String status, UUID userId) {
         List<Change> changes;
         if (meetingId != null && status != null && !status.isBlank()) {
+            verifyMeetingAccess(meetingId, userId);
             changes = changeRepository.findByMeetingIdAndStatus(meetingId, parseStatus(status));
         } else if (meetingId != null) {
+            verifyMeetingAccess(meetingId, userId);
             changes = changeRepository.findByMeetingId(meetingId);
         } else if (projectId != null && status != null && !status.isBlank()) {
+            verifyProjectAccess(projectId, userId);
             changes = changeRepository.findByMeetingProjectIdAndStatus(projectId, parseStatus(status));
         } else if (projectId != null) {
+            verifyProjectAccess(projectId, userId);
             changes = changeRepository.findByMeetingProjectId(projectId);
         } else if (status != null && !status.isBlank()) {
-            changes = changeRepository.findByStatus(parseStatus(status));
+            // When filtering by status only, return changes for projects user has access to
+            changes = changeRepository.findByStatus(parseStatus(status)).stream()
+                .filter(c -> hasProjectAccess(c.getMeeting().getProject().getId(), userId))
+                .collect(Collectors.toList());
         } else {
-            changes = changeRepository.findAll();
+            // Return changes for projects user has access to
+            changes = changeRepository.findAll().stream()
+                .filter(c -> hasProjectAccess(c.getMeeting().getProject().getId(), userId))
+                .collect(Collectors.toList());
         }
 
         return changes.stream().map(this::toDTO).collect(Collectors.toList());
     }
 
-    public ChangeDTO getChange(UUID changeId) {
+    public ChangeDTO getChange(UUID changeId, UUID userId) {
         Change change = getChangeEntity(changeId);
+        verifyMeetingAccess(change.getMeeting().getId(), userId);
         return toDTO(change);
     }
 
-    public ChangeDiffDTO getDiff(UUID changeId) {
+    public ChangeDiffDTO getDiff(UUID changeId, UUID userId) {
         Change change = getChangeEntity(changeId);
+        verifyMeetingAccess(change.getMeeting().getId(), userId);
         String summary = switch (change.getChangeType()) {
             case MOVE_CARD -> "Card moved between workflow columns";
             case UPDATE_CARD -> "Card fields were updated";
@@ -63,8 +80,9 @@ public class ChangePreviewService {
             .build();
     }
 
-    public ChangeImpactDTO getImpact(UUID changeId) {
+    public ChangeImpactDTO getImpact(UUID changeId, UUID userId) {
         Change change = getChangeEntity(changeId);
+        verifyMeetingAccess(change.getMeeting().getId(), userId);
 
         String riskLevel = switch (change.getChangeType()) {
             case DELETE_CARD -> "HIGH";
@@ -81,11 +99,30 @@ public class ChangePreviewService {
             .build();
     }
 
-    public List<ChangeHistoryEntryDTO> getHistory(UUID changeId) {
+    public List<ChangeHistoryEntryDTO> getHistory(UUID changeId, UUID userId) {
+        Change change = getChangeEntity(changeId);
+        verifyMeetingAccess(change.getMeeting().getId(), userId);
         return changeAuditEntryRepository.findByChangeIdOrderByCreatedAtDesc(changeId)
             .stream()
             .map(this::toHistoryDTO)
             .collect(Collectors.toList());
+    }
+
+    private void verifyMeetingAccess(UUID meetingId, UUID userId) {
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
+        }
+    }
+
+    private void verifyProjectAccess(UUID projectId, UUID userId) {
+        if (!hasProjectAccess(projectId, userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        }
+    }
+
+    private boolean hasProjectAccess(UUID projectId, UUID userId) {
+        // Check if user has a role in the project (owner also has entry in project_members)
+        return projectMemberRepository.findMemberRole(projectId, userId).isPresent();
     }
 
     private Change getChangeEntity(UUID changeId) {

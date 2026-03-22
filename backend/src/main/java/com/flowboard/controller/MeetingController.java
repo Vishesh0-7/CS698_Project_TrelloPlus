@@ -13,8 +13,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -38,9 +36,9 @@ public class MeetingController {
     @PostMapping
     public ResponseEntity<MeetingDTO> createMeeting(
         @Valid @RequestBody CreateMeetingRequest request,
-        @RequestHeader(value = "Authorization", required = false) String authHeader
+        @RequestHeader("Authorization") String authHeader
     ) {
-        User currentUser = resolveCurrentUser(authHeader);
+        User currentUser = getCurrentUser(authHeader);
         MeetingDTO meeting = meetingService.createMeeting(request, currentUser);
         return ResponseEntity.status(HttpStatus.CREATED).body(meeting);
     }
@@ -50,8 +48,12 @@ public class MeetingController {
      * GET /api/v1/meetings/{id}
      */
     @GetMapping("/{id}")
-    public ResponseEntity<MeetingDTO> getMeeting(@PathVariable UUID id) {
-        MeetingDTO meeting = meetingService.getMeeting(id);
+    public ResponseEntity<MeetingDTO> getMeeting(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        MeetingDTO meeting = meetingService.getMeeting(id, userId);
         return ResponseEntity.ok(meeting);
     }
 
@@ -60,8 +62,12 @@ public class MeetingController {
      * GET /api/v1/projects/{projectId}/meetings
      */
     @GetMapping("/project/{projectId}")
-    public ResponseEntity<List<MeetingDTO>> getMeetingsByProject(@PathVariable UUID projectId) {
-        List<MeetingDTO> meetings = meetingService.getMeetingsByProject(projectId);
+    public ResponseEntity<List<MeetingDTO>> getMeetingsByProject(
+        @PathVariable UUID projectId,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        List<MeetingDTO> meetings = meetingService.getMeetingsByProject(projectId, userId);
         return ResponseEntity.ok(meetings);
     }
 
@@ -72,9 +78,11 @@ public class MeetingController {
     @PostMapping("/{id}/end")
     public ResponseEntity<MeetingDTO> endMeeting(
         @PathVariable UUID id,
-        @Valid @RequestBody EndMeetingRequest request
+        @Valid @RequestBody EndMeetingRequest request,
+        @RequestHeader("Authorization") String authHeader
     ) {
-        MeetingDTO meeting = meetingService.endMeeting(id, request.getTranscript());
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        MeetingDTO meeting = meetingService.endMeeting(id, request.getTranscript(), userId);
         return ResponseEntity.ok(meeting);
     }
 
@@ -86,9 +94,9 @@ public class MeetingController {
     public ResponseEntity<MeetingDTO> updateMeeting(
         @PathVariable UUID id,
         @Valid @RequestBody UpdateMeetingRequest request,
-        @RequestHeader(value = "Authorization", required = false) String authHeader
+        @RequestHeader("Authorization") String authHeader
     ) {
-        User currentUser = resolveCurrentUser(authHeader);
+        User currentUser = getCurrentUser(authHeader);
         MeetingDTO meeting = meetingService.updateMeeting(id, request, currentUser);
         return ResponseEntity.ok(meeting);
     }
@@ -100,9 +108,9 @@ public class MeetingController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteMeeting(
         @PathVariable UUID id,
-        @RequestHeader(value = "Authorization", required = false) String authHeader
+        @RequestHeader("Authorization") String authHeader
     ) {
-        User currentUser = resolveCurrentUser(authHeader);
+        User currentUser = getCurrentUser(authHeader);
         meetingService.deleteMeeting(id, currentUser);
         return ResponseEntity.noContent().build();
     }
@@ -114,9 +122,11 @@ public class MeetingController {
     @PostMapping("/{id}/members")
     public ResponseEntity<Void> addMeetingMember(
         @PathVariable UUID id,
-        @Valid @RequestBody AddMeetingMemberRequest request
+        @Valid @RequestBody AddMeetingMemberRequest request,
+        @RequestHeader("Authorization") String authHeader
     ) {
-        meetingService.addMeetingMember(id, request.getUserId());
+        UUID actorUserId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        meetingService.addMeetingMember(id, request.getUserId(), actorUserId);
         return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
@@ -127,9 +137,11 @@ public class MeetingController {
     @DeleteMapping("/{id}/members/{userId}")
     public ResponseEntity<Void> removeMeetingMember(
         @PathVariable UUID id,
-        @PathVariable UUID userId
+        @PathVariable UUID userId,
+        @RequestHeader("Authorization") String authHeader
     ) {
-        meetingService.removeMeetingMember(id, userId);
+        UUID actorUserId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        meetingService.removeMeetingMember(id, userId, actorUserId);
         return ResponseEntity.noContent().build();
     }
 
@@ -138,32 +150,21 @@ public class MeetingController {
      * GET /api/v1/meetings/{id}/members
      */
     @GetMapping("/{id}/members")
-    public ResponseEntity<List<String>> getMeetingMembers(@PathVariable UUID id) {
-        List<String> memberNames = meetingService.getMeetingMembers(id)
+    public ResponseEntity<List<String>> getMeetingMembers(
+        @PathVariable UUID id,
+        @RequestHeader("Authorization") String authHeader
+    ) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        List<String> memberNames = meetingService.getMeetingMembers(id, userId)
             .stream()
             .map(u -> u.getUsername())
             .collect(Collectors.toList());
         return ResponseEntity.ok(memberNames);
     }
 
-    private User resolveCurrentUser(String authHeader) {
-        if (authHeader != null && !authHeader.isBlank()) {
-            UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-            return userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
-        }
-
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getPrincipal() instanceof User principalUser) {
-            return principalUser;
-        }
-
-        if (authentication != null && authentication.getName() != null) {
-            return userRepository.findByEmailIgnoreCase(authentication.getName())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
-        }
-
-        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing authentication");
+    private User getCurrentUser(String authHeader) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return userRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
     }
-
 }
