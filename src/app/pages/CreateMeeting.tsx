@@ -31,7 +31,7 @@ export function CreateMeeting() {
   const [agenda, setAgenda] = useState('');
   const [platform, setPlatform] = useState('');
   const [link, setLink] = useState('');
-  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
   // Load projects on mount
   useEffect(() => {
@@ -57,7 +57,7 @@ export function CreateMeeting() {
   useEffect(() => {
     if (!selectedProjectId) {
       setProjectMembers([]);
-      setSelectedMembers([]);
+      setSelectedMemberIds([]);
       return;
     }
 
@@ -75,11 +75,11 @@ export function CreateMeeting() {
         
         setProjectMembers(mappedMembers);
         // Auto-select all project members
-        setSelectedMembers(mappedMembers.map((m) => m.name));
+        setSelectedMemberIds(mappedMembers.map((m) => m.id));
       } catch (error) {
         toast.error('Failed to load project members');
         setProjectMembers([]);
-        setSelectedMembers([]);
+        setSelectedMemberIds([]);
       } finally {
         setLoadingMembers(false);
       }
@@ -88,11 +88,11 @@ export function CreateMeeting() {
     void loadMembers();
   }, [selectedProjectId]);
 
-  const handleToggleMember = (memberName: string) => {
-    setSelectedMembers((prev) =>
-      prev.includes(memberName)
-        ? prev.filter((m) => m !== memberName)
-        : [...prev, memberName]
+  const handleToggleMember = (memberId: string) => {
+    setSelectedMemberIds((prev) =>
+      prev.includes(memberId)
+        ? prev.filter((id) => id !== memberId)
+        : [...prev, memberId]
     );
   };
 
@@ -102,7 +102,7 @@ export function CreateMeeting() {
       return;
     }
 
-    if (!title.trim() || !date || !time || selectedMembers.length === 0) {
+    if (!title.trim() || !date || !time || selectedMemberIds.length === 0) {
       toast.error('Please fill in all required fields and select at least one team member');
       return;
     }
@@ -127,6 +127,7 @@ export function CreateMeeting() {
         meetingTime: `${time}:00`,
         platform: platform.trim() || undefined,
         meetingLink: link.trim() || undefined,
+        additionalMemberIds: selectedMemberIds,
       });
 
       toast.success('Meeting created successfully');
@@ -150,7 +151,7 @@ export function CreateMeeting() {
             Back to Meetings
           </Button>
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Create New Meeting</h1>
-          <p className="text-gray-600">Set up a new meeting and automatically add project members</p>
+          <p className="text-gray-600">Set up a new meeting and choose exactly who participates</p>
         </div>
 
         {/* Form */}
@@ -259,8 +260,8 @@ export function CreateMeeting() {
                   <div key={member.id} className="flex items-center gap-3">
                     <Checkbox
                       id={`member-${member.id}`}
-                      checked={selectedMembers.includes(member.name)}
-                      onCheckedChange={() => handleToggleMember(member.name)}
+                      checked={selectedMemberIds.includes(member.id)}
+                      onCheckedChange={() => handleToggleMember(member.id)}
                     />
                     <Label
                       htmlFor={`member-${member.id}`}
@@ -273,23 +274,27 @@ export function CreateMeeting() {
                 ))}
               </div>
             )}
-            {selectedMembers.length > 0 && (
+            {selectedMemberIds.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-3">
-                {selectedMembers.map((member) => (
+                {selectedMemberIds.map((memberId) => {
+                  const member = projectMembers.find((m) => m.id === memberId);
+                  const label = member ? member.name : memberId;
+                  return (
                   <Badge
-                    key={member}
+                    key={memberId}
                     variant="outline"
                     className="pl-3 pr-1 py-1.5 bg-blue-50 text-blue-700 border-blue-200"
                   >
-                    {member}
+                    {label}
                     <button
-                      onClick={() => handleToggleMember(member)}
+                      onClick={() => handleToggleMember(memberId)}
                       className="ml-2 hover:bg-blue-200 rounded-full p-0.5 transition-colors"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   </Badge>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -345,7 +350,7 @@ export function CreateMeeting() {
             <Button
               onClick={handleCreateMeeting}
               className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-              disabled={!selectedProjectId || projectMembers.length === 0 || selectedMembers.length === 0 || loadingProjects || loadingMembers}
+              disabled={!selectedProjectId || projectMembers.length === 0 || selectedMemberIds.length === 0 || loadingProjects || loadingMembers}
             >
               Create Meeting
             </Button>

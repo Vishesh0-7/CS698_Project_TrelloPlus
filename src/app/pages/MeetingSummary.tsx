@@ -24,6 +24,7 @@ import {
   type MeetingSummaryResponse,
   type ApprovalStatusResponse,
 } from '../services/api';
+import { formatMeetingDate, formatMeetingTime } from '../utils/meetingDateTime';
 
 const statusConfig: Record<string, { label: string; color: string }> = {
   SCHEDULED: { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -56,6 +57,7 @@ export function MeetingSummary() {
   const [decisionImpactSummary, setDecisionImpactSummary] = useState('');
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isProjectOwner, setIsProjectOwner] = useState(false);
 
   const reloadSummaryAndApproval = async (id: string) => {
     const [summaryData, approvalData] = await Promise.all([
@@ -68,10 +70,13 @@ export function MeetingSummary() {
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
+    let resolvedUserId: string | null = null;
     if (storedUser) {
       try {
-        setCurrentUserId(JSON.parse(storedUser)?.id ?? null);
+        resolvedUserId = JSON.parse(storedUser)?.id ?? null;
+        setCurrentUserId(resolvedUserId);
       } catch {
+        resolvedUserId = null;
         setCurrentUserId(null);
       }
     }
@@ -88,10 +93,25 @@ export function MeetingSummary() {
           apiService.getApprovalStatus(meetingId),
         ]);
 
+        let owner = false;
+        if (resolvedUserId && meetingData.projectId) {
+          try {
+            const members = await apiService.getProjectMembers(meetingData.projectId);
+            const currentMember = members.find((member: any) => {
+              const memberId = member.id || member.userId;
+              return typeof memberId === 'string' && memberId === resolvedUserId;
+            });
+            owner = (currentMember?.role || '').toLowerCase() === 'owner';
+          } catch {
+            owner = false;
+          }
+        }
+
         if (!isMounted) return;
         setMeeting(meetingData);
         setSummary(summaryData);
         setApproval(approvalData);
+        setIsProjectOwner(owner);
       } catch (error) {
         if (isMounted) {
           toast.error(error instanceof Error ? error.message : 'Failed to load meeting summary');
@@ -105,13 +125,6 @@ export function MeetingSummary() {
       isMounted = false;
     };
   }, [meetingId]);
-
-  const safeDateLabel = (value?: string, options?: Intl.DateTimeFormatOptions) => {
-    if (!value) return 'N/A';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return 'N/A';
-    return parsed.toLocaleDateString('en-US', options);
-  };
 
   const changeRequests = useMemo<ChangeRequest[]>(() => {
     if (!summary || !meeting) return [];
@@ -179,6 +192,8 @@ export function MeetingSummary() {
       ]);
       setMeeting(meetingData);
       setApproval(approvalData);
+      const refreshedSummary = await apiService.getSummaryByMeeting(meetingId);
+      setSummary(refreshedSummary);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to submit approval');
     } finally {
@@ -302,8 +317,11 @@ export function MeetingSummary() {
 
   const currentUserApproval = (approval?.responses || []).find((r) => r.userId === currentUserId && r.response !== 'PENDING');
   const hasSubmittedSummaryDecision = Boolean(currentUserApproval);
+  const hasAnyApprovedSummaryDecision = (approval?.currentApprovedCount || 0) > 0;
   const isMeetingFinalized = meeting.status === 'APPROVED' || meeting.status === 'REJECTED';
   const isItemEditingDisabled = isMeetingFinalized || hasSubmittedSummaryDecision;
+  const canEditOrDeleteItems = isProjectOwner && !isItemEditingDisabled;
+  const isAddDisabled = isItemEditingDisabled || hasAnyApprovedSummaryDecision;
 
   return (
     <div className="p-4 md:p-8 pt-20 md:pt-24 min-h-screen bg-gray-50">
@@ -322,9 +340,10 @@ export function MeetingSummary() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">{meeting.title}</h1>
+              <p className="text-sm text-gray-600 mt-1">Project: {meeting.projectName || 'N/A'}</p>
               <div className="flex items-center gap-4 text-sm text-gray-600 mt-2">
-                <div className="flex items-center gap-1"><Calendar className="w-4 h-4" />{safeDateLabel(meeting.meetingDate)}</div>
-                <div className="flex items-center gap-1"><Clock className="w-4 h-4" />{(meeting.meetingTime || '').slice(0, 5)}</div>
+                <div className="flex items-center gap-1"><Calendar className="w-4 h-4" />{formatMeetingDate(meeting.meetingDate)}</div>
+                <div className="flex items-center gap-1"><Clock className="w-4 h-4" />{formatMeetingTime(meeting.meetingTime)}</div>
               </div>
             </div>
             <Badge variant="outline" className={statusInfo.color}>{statusInfo.label}</Badge>
@@ -338,7 +357,7 @@ export function MeetingSummary() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={isItemEditingDisabled}
+                disabled={isAddDisabled}
                 onClick={() => {
                   setEditingDecisionId(null);
                   setDecisionDescription('');
@@ -356,7 +375,7 @@ export function MeetingSummary() {
                 <Input placeholder="Source context (optional)" value={decisionSourceContext} onChange={(e) => setDecisionSourceContext(e.target.value)} />
                 <Input placeholder="Impact summary (optional)" value={decisionImpactSummary} onChange={(e) => setDecisionImpactSummary(e.target.value)} />
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={saveDecisionItem} disabled={isSavingItem || !decisionDescription.trim() || isItemEditingDisabled}>Save</Button>
+                  <Button size="sm" onClick={saveDecisionItem} disabled={isSavingItem || !decisionDescription.trim() || isAddDisabled}>Save</Button>
                   <Button size="sm" variant="outline" onClick={resetDecisionEditor}>Cancel</Button>
                 </div>
               </div>
@@ -366,7 +385,6 @@ export function MeetingSummary() {
                 <li key={d.id} className="border rounded-lg p-3 flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <p>{d.description}</p>
-                    <p className="text-xs text-gray-500 mt-1">Created: {safeDateLabel(d.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
                     <p className="text-xs text-gray-500 mt-1">Approval: {d.approvalStatus || 'PENDING'}</p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -381,7 +399,7 @@ export function MeetingSummary() {
                     <Button
                       size="icon"
                       variant="ghost"
-                      disabled={isItemEditingDisabled}
+                      disabled={!canEditOrDeleteItems}
                       onClick={() => {
                         setEditingDecisionId(d.id);
                         setDecisionDescription(d.description || '');
@@ -392,7 +410,7 @@ export function MeetingSummary() {
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button size="icon" variant="ghost" disabled={isItemEditingDisabled || isSavingItem} onClick={() => removeDecisionItem(d.id)}>
+                    <Button size="icon" variant="ghost" disabled={!canEditOrDeleteItems || isSavingItem} onClick={() => removeDecisionItem(d.id)}>
                       <Trash2 className="w-4 h-4 text-red-600" />
                     </Button>
                   </div>
@@ -408,7 +426,7 @@ export function MeetingSummary() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={isItemEditingDisabled}
+                disabled={isAddDisabled}
                 onClick={() => {
                   setEditingActionId(null);
                   setActionDescription('');
@@ -435,7 +453,7 @@ export function MeetingSummary() {
                   <option value="CRITICAL">CRITICAL</option>
                 </select>
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={saveActionItem} disabled={isSavingItem || !actionDescription.trim() || isItemEditingDisabled}>Save</Button>
+                  <Button size="sm" onClick={saveActionItem} disabled={isSavingItem || !actionDescription.trim() || isAddDisabled}>Save</Button>
                   <Button size="sm" variant="outline" onClick={resetActionEditor}>Cancel</Button>
                 </div>
               </div>
@@ -459,7 +477,7 @@ export function MeetingSummary() {
                     <Button
                       size="icon"
                       variant="ghost"
-                      disabled={isItemEditingDisabled}
+                      disabled={!canEditOrDeleteItems}
                       onClick={() => {
                         setEditingActionId(a.id);
                         setActionDescription(a.description || '');
@@ -470,7 +488,7 @@ export function MeetingSummary() {
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button size="icon" variant="ghost" disabled={isItemEditingDisabled || isSavingItem} onClick={() => removeActionItem(a.id)}>
+                    <Button size="icon" variant="ghost" disabled={!canEditOrDeleteItems || isSavingItem} onClick={() => removeActionItem(a.id)}>
                       <Trash2 className="w-4 h-4 text-red-600" />
                     </Button>
                   </div>
@@ -478,6 +496,7 @@ export function MeetingSummary() {
               ))}
               {(summary?.actionItems || []).length === 0 && <li className="text-gray-500">No action items yet</li>}
             </ul>
+            <p className="text-xs text-gray-500 mt-3">Only the project owner can edit or delete existing items. Adding new items is disabled once summary approval starts.</p>
           </div>
         </div>
 

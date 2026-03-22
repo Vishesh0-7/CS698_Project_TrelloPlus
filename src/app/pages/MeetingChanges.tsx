@@ -6,7 +6,7 @@ import { Badge } from '../components/ui/badge';
 import { ChangeDetailModal } from '../components/ChangeDetailModal';
 import { ArrowLeft } from 'lucide-react';
 import { useProjectStore } from '../store/projectStore';
-import { apiService, mapProjectResponseToProject, type MeetingResponse } from '../services/api';
+import { apiService, mapProjectResponseToProject, type MeetingResponse, type ProjectResponse } from '../services/api';
 import { toast } from 'sonner';
 import { CheckCircle2 } from 'lucide-react';
 
@@ -26,7 +26,23 @@ export function MeetingChanges() {
   const [applyingChangeId, setApplyingChangeId] = useState<string | null>(null);
   const [appliedSuccessChangeId, setAppliedSuccessChangeId] = useState<string | null>(null);
   const [canApplyChanges, setCanApplyChanges] = useState(false);
+  const [currentProject, setCurrentProject] = useState<ProjectResponse | null>(null);
   const setProjects = useProjectStore((s) => s.setProjects);
+
+  const getApplyErrorMessage = (error: unknown) => {
+    const raw = error instanceof Error ? error.message : 'Failed to apply change to board';
+    const normalized = raw.toLowerCase();
+
+    if (normalized.includes('card not found') || normalized.includes('could not resolve card')) {
+      return 'This change references a card that no longer exists. Regenerate the summary to refresh stale changes.';
+    }
+
+    if (normalized.includes('stage not found') || normalized.includes('could not resolve stage')) {
+      return 'This change references a column that no longer exists. Regenerate the summary to refresh stale changes.';
+    }
+
+    return raw;
+  };
 
   const refreshMeetingChanges = async (activeMeetingId: string) => {
     const [meetingData, changeData] = await Promise.all([
@@ -85,7 +101,28 @@ export function MeetingChanges() {
       project.id === projectId ? refreshedProject : project
     );
 
+    setCurrentProject(refreshedProject);
     setProjects(mergedProjects.map(mapProjectResponseToProject));
+  };
+
+  const getTargetCardId = (change: ChangeRequest) => {
+    const beforeId = change.before && typeof change.before === 'object' ? (change.before as any).id : undefined;
+    const afterId = change.after && typeof change.after === 'object' ? (change.after as any).id : undefined;
+    const id = afterId || beforeId;
+    return typeof id === 'string' ? id : null;
+  };
+
+  const hasMissingTargetCard = (change: ChangeRequest) => {
+    if (change.type === 'CREATE_CARD') {
+      return false;
+    }
+
+    const cardId = getTargetCardId(change);
+    if (!cardId || !currentProject) {
+      return false;
+    }
+
+    return !currentProject.tasks.some((task) => task.id === cardId);
   };
 
   useEffect(() => {
@@ -105,7 +142,9 @@ export function MeetingChanges() {
         setMeeting(meetingData);
         const storedUser = localStorage.getItem('user');
         const currentUserId = storedUser ? JSON.parse(storedUser)?.id : null;
-        const owner = (await apiService.getProject(meetingData.projectId)).members.find((member) => member.role.toLowerCase() === 'owner');
+        const projectData = await apiService.getProject(meetingData.projectId);
+        setCurrentProject(projectData);
+        const owner = projectData.members.find((member) => member.role.toLowerCase() === 'owner');
         setCanApplyChanges(Boolean(currentUserId && owner?.id === currentUserId));
         setChanges(
           changeData.map((c) => {
@@ -162,7 +201,14 @@ export function MeetingChanges() {
   const handleApplyToBoard = async (changeId: string) => {
     if (!meetingId || !meeting?.projectId) return;
 
+    const targetChange = changes.find((change) => change.id === changeId);
+    if (targetChange && hasMissingTargetCard(targetChange)) {
+      toast.error('Cannot apply this change because its target card no longer exists. Regenerate changes first.');
+      return;
+    }
+
     setApplyingChangeId(changeId);
+    setAppliedSuccessChangeId(null);
     try {
       const result = await apiService.applyChange(changeId);
       await Promise.all([
@@ -173,7 +219,7 @@ export function MeetingChanges() {
 
       toast.success(result.message || 'Change applied to board');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to apply change to board');
+      toast.error(getApplyErrorMessage(error));
     } finally {
       setApplyingChangeId(null);
     }
@@ -240,6 +286,7 @@ export function MeetingChanges() {
                 label: change.type, 
                 color: 'bg-gray-50 text-gray-700 border-gray-200' 
               };
+              const staleTarget = hasMissingTargetCard(change);
               
               return (
                 <div
@@ -258,6 +305,11 @@ export function MeetingChanges() {
                             Applied
                           </Badge>
                         )}
+                        {staleTarget && (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                            Target missing
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-gray-900">
                         {getChangeDescription(change)}
@@ -269,21 +321,28 @@ export function MeetingChanges() {
                         e.stopPropagation();
                         void handleApplyToBoard(change.id);
                       }}
-                      disabled={!canApplyChanges || change.status === 'APPLIED' || applyingChangeId === change.id}
+                      disabled={!canApplyChanges || change.status === 'APPLIED' || applyingChangeId === change.id || staleTarget}
                     >
                       {change.status === 'APPLIED' || appliedSuccessChangeId === change.id
                         ? 'Applied'
                         : applyingChangeId === change.id
                         ? 'Applying...'
+                        : staleTarget
+                        ? 'Stale Target'
                         : canApplyChanges
                         ? 'Apply to Board'
                         : 'Read Only'}
                     </Button>
                   </div>
+                  {staleTarget && change.status !== 'APPLIED' && (
+                    <p className="mt-3 text-sm text-amber-700">
+                      This change references a card that no longer exists.
+                    </p>
+                  )}
                   {appliedSuccessChangeId === change.id && (
                     <p className="mt-3 text-sm text-green-700 flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4" />
-                      Applied successfully and synced with board state.
+                      Apply request completed successfully.
                     </p>
                   )}
                 </div>

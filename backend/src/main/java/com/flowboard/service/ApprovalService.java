@@ -25,7 +25,6 @@ public class ApprovalService {
     private final MeetingMemberRepository meetingMemberRepository;
     private final ActionItemRepository actionItemRepository;
     private final DecisionRepository decisionRepository;
-    private final UserRepository userRepository;
 
     /**
      * Submit approval response for a meeting summary
@@ -66,6 +65,10 @@ public class ApprovalService {
         response.setRespondedAt(LocalDateTime.now());
         approvalResponseRepository.save(response);
 
+        if (approvalResponse == ApprovalResponseSummary.ApprovalResponse.APPROVED) {
+            approveAllSummaryItems(meetingId);
+        }
+
         // Check if all members have responded
         checkAndUpdateApprovalStatus(meeting, approvalRequest);
     }
@@ -74,7 +77,7 @@ public class ApprovalService {
      * Get approval status for a meeting
      */
     public ApprovalStatusDTO getApprovalStatus(UUID meetingId) {
-        Meeting meeting = meetingRepository.findById(meetingId)
+        meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
 
         ApprovalRequestSummary approvalRequest = approvalRequestRepository.findByMeetingId(meetingId)
@@ -138,9 +141,24 @@ public class ApprovalService {
             } else if (approvedCount == totalRequired) {
                 // If all approved, mark as approved
                 meeting.setStatus(Meeting.MeetingStatus.APPROVED);
+                approveAllSummaryItems(meeting.getId());
             }
             meetingRepository.save(meeting);
         }
+    }
+
+    private void approveAllSummaryItems(UUID meetingId) {
+        List<ActionItem> actionItems = actionItemRepository.findByMeetingId(meetingId);
+        for (ActionItem actionItem : actionItems) {
+            actionItem.setApprovalStatus(ActionItem.ApprovalStatus.APPROVED);
+        }
+        actionItemRepository.saveAll(actionItems);
+
+        List<Decision> decisions = decisionRepository.findByMeetingId(meetingId);
+        for (Decision decision : decisions) {
+            decision.setApprovalStatus(Decision.ApprovalStatus.APPROVED);
+        }
+        decisionRepository.saveAll(decisions);
     }
 
     /**

@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
-import { ArrowLeft, Sparkles, Loader2 } from 'lucide-react';
+import { ArrowLeft, Sparkles, Loader2, Video, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiService, type MeetingResponse } from '../services/api';
+import { formatMeetingDate, formatMeetingTime } from '../utils/meetingDateTime';
 
 export function MeetingTranscript() {
   const { meetingId } = useParams<{ meetingId: string }>();
@@ -12,6 +13,14 @@ export function MeetingTranscript() {
   const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
   const [transcript, setTranscript] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const toJoinHref = (value?: string) => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
 
   useEffect(() => {
     if (!meetingId) return;
@@ -96,14 +105,38 @@ export function MeetingTranscript() {
         {/* Meeting Info */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">{meeting.title}</h1>
+          <p className="text-gray-600 mb-1">Project: {meeting.projectName || 'N/A'}</p>
           <p className="text-gray-600">
-            {new Date(meeting.meetingDate).toLocaleDateString('en-US', {
+            {formatMeetingDate(meeting.meetingDate, {
               month: 'long',
               day: 'numeric',
               year: 'numeric',
             })}{' '}
-            at {(meeting.meetingTime || '').slice(0, 5)}
+            at {formatMeetingTime(meeting.meetingTime)}
           </p>
+          {isScheduledMeeting && (
+            <div className="mt-3 space-y-1 text-sm text-gray-600">
+              <div className="flex items-center gap-2">
+                <Video className="w-4 h-4 flex-shrink-0" />
+                <span>{meeting.platform?.trim() || 'Platform not set'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <ExternalLink className="w-4 h-4 flex-shrink-0" />
+                {toJoinHref(meeting.meetingLink) ? (
+                  <a
+                    href={toJoinHref(meeting.meetingLink) || undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 hover:text-blue-700 underline"
+                  >
+                    Join meeting
+                  </a>
+                ) : (
+                  <span>Join link not set</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Transcript Input */}

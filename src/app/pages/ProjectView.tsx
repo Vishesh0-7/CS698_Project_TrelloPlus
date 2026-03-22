@@ -26,9 +26,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { Calendar, Clock, Plus, FileText, ListChecks, CheckCircle, BookOpen } from 'lucide-react';
+import { Calendar, Clock, Plus, FileText, ListChecks, CheckCircle, BookOpen, Video, ExternalLink } from 'lucide-react';
 import { apiService, mapProjectResponseToProject, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
+import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
 
 type Tab = 'board' | 'meetings' | 'decisions';
 
@@ -49,6 +50,14 @@ export function ProjectView() {
   const [isUpdatingMeeting, setIsUpdatingMeeting] = useState(false);
   const attemptedProjectLoadRef = useRef<string | null>(null);
   const decisionsLoadKeyRef = useRef<string | null>(null);
+
+  const toJoinHref = (value?: string) => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
   
   // Update active tab when URL changes
   useEffect(() => {
@@ -404,22 +413,9 @@ export function ProjectView() {
     }
   };
 
-  const safeDateLabel = (value?: string) => {
-    if (!value) return 'N/A';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return 'N/A';
-    return parsed.toLocaleDateString([], {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  };
-  
   // Sort meetings by date (most recent first)
   const sortedMeetings = [...projectMeetings].sort((a, b) => {
-    const dateA = new Date(`${a.meetingDate}T${a.meetingTime}`);
-    const dateB = new Date(`${b.meetingDate}T${b.meetingTime}`);
-    return dateB.getTime() - dateA.getTime();
+    return getMeetingSortValue(b.meetingDate, b.meetingTime) - getMeetingSortValue(a.meetingDate, a.meetingTime);
   });
 
   const statusConfig = {
@@ -531,13 +527,6 @@ export function ProjectView() {
                           
                           {/* Metadata */}
                           <div className="space-y-2 text-sm">
-                            {decision.sourceContext && (
-                              <div className="text-gray-700 bg-gray-50 rounded p-3">
-                                <p className="text-gray-600 font-medium mb-1">Context:</p>
-                                <p>{decision.sourceContext}</p>
-                              </div>
-                            )}
-                            
                             <div className="flex flex-col gap-2">
                               <div className="flex items-center gap-2 text-gray-600">
                                 <Calendar className="w-4 h-4" />
@@ -632,19 +621,38 @@ export function ProjectView() {
                         <div className="space-y-2 mb-4">
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Calendar className="w-4 h-4 flex-shrink-0" />
-                            <span>
-                              {new Date(meeting.meetingDate).toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                year: 'numeric',
-                              })}
-                            </span>
+                            <span>{formatMeetingDate(meeting.meetingDate)}</span>
                           </div>
                           
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Clock className="w-4 h-4 flex-shrink-0" />
-                            <span>{meeting.meetingTime?.slice(0, 5)}</span>
+                            <span>{formatMeetingTime(meeting.meetingTime)}</span>
                           </div>
+
+                          {normalizedStatus === 'scheduled' && (
+                            <>
+                              <div className="flex items-center gap-2 text-sm text-gray-600">
+                                <Video className="w-4 h-4 flex-shrink-0" />
+                                <span>{meeting.platform?.trim() || 'Platform not set'}</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-sm text-gray-600">
+                                <ExternalLink className="w-4 h-4 flex-shrink-0" />
+                                {toJoinHref(meeting.meetingLink) ? (
+                                  <a
+                                    href={toJoinHref(meeting.meetingLink) || undefined}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:text-blue-700 underline truncate"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    Join meeting
+                                  </a>
+                                ) : (
+                                  <span>Join link not set</span>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
 
                         {/* Actions */}

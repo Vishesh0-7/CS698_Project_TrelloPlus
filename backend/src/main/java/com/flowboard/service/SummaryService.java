@@ -198,6 +198,8 @@ public class SummaryService {
 
     public MeetingSummaryDTO addActionItem(UUID meetingId, String description, String sourceContext, String priority, User actor) {
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+        assertSummaryNotApprovedYet(meetingId);
+        boolean autoApprove = hasUserApprovedSummary(meetingId, actor.getId());
 
         ActionItem.Priority parsedPriority = ActionItem.Priority.MEDIUM;
         if (priority != null && !priority.isBlank()) {
@@ -214,7 +216,7 @@ public class SummaryService {
             .sourceContext(sourceContext)
             .priority(parsedPriority)
             .status(ActionItem.ActionItemStatus.PENDING)
-            .approvalStatus(ActionItem.ApprovalStatus.PENDING)
+            .approvalStatus(autoApprove ? ActionItem.ApprovalStatus.APPROVED : ActionItem.ApprovalStatus.PENDING)
             .build();
 
         actionItemRepository.save(actionItem);
@@ -228,6 +230,7 @@ public class SummaryService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Action item not found"));
 
         Meeting meeting = getEditableMeetingForMember(actionItem.getMeeting().getId(), actor);
+        assertProjectOwner(meeting, actor);
 
         if (description != null) {
             actionItem.setDescription(description);
@@ -255,7 +258,8 @@ public class SummaryService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Action item not found"));
 
         UUID meetingId = actionItem.getMeeting().getId();
-        getEditableMeetingForMember(meetingId, actor);
+        Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+        assertProjectOwner(meeting, actor);
         actionItemRepository.delete(actionItem);
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
@@ -265,13 +269,15 @@ public class SummaryService {
 
     public MeetingSummaryDTO addDecision(UUID meetingId, String description, String sourceContext, String impactSummary, User actor) {
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+        assertSummaryNotApprovedYet(meetingId);
+        boolean autoApprove = hasUserApprovedSummary(meetingId, actor.getId());
 
         Decision decision = Decision.builder()
             .meeting(meeting)
             .description(description)
             .sourceContext(sourceContext)
             .impactSummary(impactSummary)
-            .approvalStatus(Decision.ApprovalStatus.PENDING)
+            .approvalStatus(autoApprove ? Decision.ApprovalStatus.APPROVED : Decision.ApprovalStatus.PENDING)
             .build();
 
         decisionRepository.save(decision);
@@ -286,6 +292,7 @@ public class SummaryService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found"));
 
         Meeting meeting = getEditableMeetingForMember(decision.getMeeting().getId(), actor);
+        assertProjectOwner(meeting, actor);
 
         if (description != null) {
             decision.setDescription(description);
@@ -309,7 +316,8 @@ public class SummaryService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Decision not found"));
 
         UUID meetingId = decision.getMeeting().getId();
-        getEditableMeetingForMember(meetingId, actor);
+        Meeting meeting = getEditableMeetingForMember(meetingId, actor);
+        assertProjectOwner(meeting, actor);
         decisionRepository.delete(decision);
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
@@ -330,6 +338,32 @@ public class SummaryService {
         }
 
         return meeting;
+    }
+
+    private void assertProjectOwner(Meeting meeting, User actor) {
+        if (!meeting.getProject().getOwner().getId().equals(actor.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the project owner can modify or remove existing summary items");
+        }
+    }
+
+    private boolean hasUserApprovedSummary(UUID meetingId, UUID userId) {
+        return approvalRequestSummaryRepository.findByMeetingId(meetingId)
+            .flatMap(request -> approvalResponseSummaryRepository.findByApprovalRequestIdAndUserId(request.getId(), userId))
+            .map(response -> response.getResponse() == ApprovalResponseSummary.ApprovalResponse.APPROVED)
+            .orElse(false);
+    }
+
+    private void assertSummaryNotApprovedYet(UUID meetingId) {
+        boolean approvedExists = approvalRequestSummaryRepository.findByMeetingId(meetingId)
+            .map(request -> approvalResponseSummaryRepository.countByApprovalRequestIdAndResponse(
+                request.getId(),
+                ApprovalResponseSummary.ApprovalResponse.APPROVED
+            ) > 0)
+            .orElse(false);
+
+        if (approvedExists) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot add new items after summary approval has started");
+        }
     }
 
     /**
@@ -457,11 +491,23 @@ public class SummaryService {
 
     private MockChangePayload buildMovePayload(AIEngine.MeetingAnalysisResult.ChangeData changeData, BoardChangeContext ctx) {
         if (ctx.sampleCard() == null || ctx.secondaryStage() == null) {
-            return buildCreatePayload(changeData, ctx);
+            return null;
         }
 
         Card card = ctx.sampleCard();
+        Stage currentStage = card.getStage();
         Stage target = ctx.secondaryStage();
+
+        if (currentStage != null && target != null && target.getId().equals(currentStage.getId())) {
+            Stage alternate = ctx.primaryStage();
+            if (alternate != null && !alternate.getId().equals(currentStage.getId())) {
+                target = alternate;
+            }
+        }
+
+        if (currentStage == null || target == null || target.getId().equals(currentStage.getId())) {
+            return null;
+        }
 
         Map<String, Object> before = cardJson(card, card.getStage());
         Map<String, Object> after = cardJson(card, target);
@@ -474,13 +520,13 @@ public class SummaryService {
 
     private MockChangePayload buildUpdatePayload(AIEngine.MeetingAnalysisResult.ChangeData changeData, BoardChangeContext ctx) {
         if (ctx.sampleCard() == null) {
-            return buildCreatePayload(changeData, ctx);
+            return null;
         }
 
         Card card = ctx.sampleCard();
         Map<String, Object> before = cardJson(card, card.getStage());
         Map<String, Object> after = cardJson(card, card.getStage());
-        String updatedTitle = card.getTitle() + " (Meeting Update)";
+        String updatedTitle = withMeetingUpdateSuffix(card.getTitle());
         after.put("title", updatedTitle);
         after.put("description", changeData.description + " - " + changeData.context);
 
@@ -512,7 +558,7 @@ public class SummaryService {
 
     private MockChangePayload buildDeletePayload(AIEngine.MeetingAnalysisResult.ChangeData changeData, BoardChangeContext ctx) {
         if (ctx.sampleCard() == null) {
-            return buildCreatePayload(changeData, ctx);
+            return null;
         }
 
         Card card = ctx.sampleCard();
@@ -536,8 +582,27 @@ public class SummaryService {
         if (stage != null) {
             value.put("stageId", stage.getId().toString());
             value.put("columnId", stage.getId().toString());
+            value.put("stageTitle", stage.getTitle());
+            value.put("columnTitle", stage.getTitle());
         }
         return value;
+    }
+
+    private MockChangePayload emptyPayload(Change.ChangeType changeType) {
+        return new MockChangePayload(changeType, "{}", "{}");
+    }
+
+    private String withMeetingUpdateSuffix(String title) {
+        if (title == null || title.isBlank()) {
+            return "Untitled (Meeting Update)";
+        }
+
+        String normalized = title.trim();
+        if (normalized.endsWith("(Meeting Update)")) {
+            return normalized;
+        }
+
+        return normalized + " (Meeting Update)";
     }
 
     private String toJson(Map<String, Object> value) {

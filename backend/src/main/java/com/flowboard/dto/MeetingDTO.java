@@ -18,6 +18,7 @@ import java.util.UUID;
 public class MeetingDTO {
     private UUID id;
     private UUID projectId;
+    private String projectName;
     private String title;
     private String description;
     private LocalDate meetingDate;

@@ -33,7 +33,7 @@ public class ChangeApplicationService {
         Change change = changeRepository.findById(changeId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Change not found"));
 
-        ensureProjectOwner(change.getMeeting().getProject().getId(), actor.getId());
+        ensureProjectOwner(change, actor.getId());
 
         // Allow mocked/generated changes (PENDING/UNDER_REVIEW) to be applied directly for now.
         // This keeps the flow LLM-ready while supporting current mock data generation.
@@ -87,7 +87,15 @@ public class ChangeApplicationService {
         }
     }
 
-    private void ensureProjectOwner(UUID projectId, UUID userId) {
+    private void ensureProjectOwner(Change change, UUID userId) {
+        UUID projectId = change.getMeeting().getProject().getId();
+
+        // Trust canonical owner on Project first (covers legacy data where project_members owner row may be missing).
+        if (change.getMeeting().getProject().getOwner() != null
+            && change.getMeeting().getProject().getOwner().getId().equals(userId)) {
+            return;
+        }
+
         String role = projectMemberRepository.findMemberRole(projectId, userId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a project member"));
 
@@ -125,46 +133,18 @@ public class ChangeApplicationService {
         UUID cardId = readUuid(after, "id", readUuid(before, "id", null));
         UUID targetStageId = readUuid(after, "stageId", readUuid(after, "columnId", null));
 
-        Card fallbackCard = null;
-        Stage fallbackTargetStage = null;
-
         if (cardId == null || targetStageId == null) {
-            fallbackCard = findAnyCardOnBoard(board);
-
-            if (fallbackCard == null) {
-                // Ensure mock MOVE_CARD always has something visible to move.
-                Stage seedStage = findFirstStage(board);
-                if (seedStage != null) {
-                    fallbackCard = createFallbackCard(seedStage, "Mock moved task");
-                }
-            }
-
-            fallbackTargetStage = findMoveTargetStage(board, fallbackCard != null ? fallbackCard.getStage() : null);
-
-            if (cardId == null && fallbackCard != null) {
-                cardId = fallbackCard.getId();
-            }
-            if (targetStageId == null && fallbackTargetStage != null) {
-                targetStageId = fallbackTargetStage.getId();
-            }
-        }
-
-        if (cardId == null || targetStageId == null) {
-            throw new IllegalArgumentException("MOVE_CARD could not resolve card/stage from mocked data and board state");
+            throw new IllegalArgumentException("MOVE_CARD payload is missing required card/stage identifiers");
         }
 
         final UUID resolvedCardId = cardId;
         final UUID resolvedTargetStageId = targetStageId;
 
-        Card card = fallbackCard != null && fallbackCard.getId().equals(resolvedCardId)
-            ? fallbackCard
-            : cardRepository.findById(resolvedCardId)
-                .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
+        Card card = cardRepository.findById(resolvedCardId)
+            .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
 
-        Stage targetStage = fallbackTargetStage != null && fallbackTargetStage.getId().equals(resolvedTargetStageId)
-            ? fallbackTargetStage
-            : stageRepository.findById(resolvedTargetStageId)
-                .orElseThrow(() -> new IllegalArgumentException("Stage not found: " + resolvedTargetStageId));
+        Stage targetStage = stageRepository.findById(resolvedTargetStageId)
+            .orElseThrow(() -> new IllegalArgumentException("Stage not found: " + resolvedTargetStageId));
 
         card.setStage(targetStage);
         cardRepository.save(card);
@@ -173,33 +153,14 @@ public class ChangeApplicationService {
     private void applyUpdateCard(Board board, JsonNode before, JsonNode after) {
         UUID cardId = readUuid(after, "id", readUuid(before, "id", null));
 
-        Card fallbackCard = null;
         if (cardId == null) {
-            fallbackCard = findAnyCardOnBoard(board);
-
-            if (fallbackCard == null) {
-                // Ensure mock UPDATE_CARD always has a visible card target.
-                Stage seedStage = findFirstStage(board);
-                if (seedStage != null) {
-                    fallbackCard = createFallbackCard(seedStage, "Mock updated task");
-                }
-            }
-
-            if (fallbackCard != null) {
-                cardId = fallbackCard.getId();
-            }
-        }
-
-        if (cardId == null) {
-            throw new IllegalArgumentException("UPDATE_CARD could not resolve card from mocked data and board state");
+            throw new IllegalArgumentException("UPDATE_CARD payload is missing required card identifier");
         }
 
         final UUID resolvedCardId = cardId;
 
-        Card card = fallbackCard != null && fallbackCard.getId().equals(resolvedCardId)
-            ? fallbackCard
-            : cardRepository.findById(resolvedCardId)
-                .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
+        Card card = cardRepository.findById(resolvedCardId)
+            .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
 
         if (after.hasNonNull("title")) {
             card.setTitle(after.get("title").asText());
@@ -267,24 +228,15 @@ public class ChangeApplicationService {
 
     private void applyDeleteCard(Board board, JsonNode before, JsonNode after) {
         UUID cardId = readUuid(before, "id", readUuid(after, "id", null));
-        Card fallbackCard = null;
-        if (cardId == null) {
-            fallbackCard = findAnyCardOnBoard(board);
-            if (fallbackCard != null) {
-                cardId = fallbackCard.getId();
-            }
-        }
 
         if (cardId == null) {
-            throw new IllegalArgumentException("DELETE_CARD could not resolve card from mocked data and board state");
+            throw new IllegalArgumentException("DELETE_CARD payload is missing required card identifier");
         }
 
         final UUID resolvedCardId = cardId;
 
-        Card card = fallbackCard != null && fallbackCard.getId().equals(resolvedCardId)
-            ? fallbackCard
-            : cardRepository.findById(resolvedCardId)
-                .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
+        Card card = cardRepository.findById(resolvedCardId)
+            .orElseThrow(() -> new IllegalArgumentException("Card not found: " + resolvedCardId));
 
         cardRepository.delete(card);
     }

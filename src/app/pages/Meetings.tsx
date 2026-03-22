@@ -23,9 +23,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { Calendar, Clock, Plus, FileText, ListChecks } from 'lucide-react';
+import { Calendar, Clock, Plus, FileText, ListChecks, Video, ExternalLink } from 'lucide-react';
 import { apiService, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
+import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
 
 const statusConfig = {
   'scheduled': { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -37,6 +38,7 @@ const statusConfig = {
 
 export function Meetings() {
   const [meetings, setMeetings] = useState<MeetingResponse[]>([]);
+  const [projectNameById, setProjectNameById] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const setMeetingsStore = useMeetingStore((s) => s.setMeetings);
   const setChangesStore = useChangeStore((s) => s.setChanges);
@@ -47,6 +49,14 @@ export function Meetings() {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [isUpdatingMeeting, setIsUpdatingMeeting] = useState(false);
+
+  const toJoinHref = (value?: string) => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
 
   const normalizeMeetingStatus = (status: string): Meeting['status'] => {
     switch (status) {
@@ -111,6 +121,12 @@ export function Meetings() {
 
     try {
       const projects = await apiService.getUserProjects();
+      setProjectNameById(
+        projects.reduce<Record<string, string>>((acc, project) => {
+          acc[project.id] = project.name;
+          return acc;
+        }, {})
+      );
 
       const meetingResults = await Promise.all(
         projects.map((project) => apiService.getMeetingsByProject(project.id))
@@ -206,9 +222,7 @@ export function Meetings() {
   // Sort meetings by date (most recent first)
   const sortedMeetings = useMemo(() => {
     return [...meetings].sort((a, b) => {
-      const dateA = new Date(`${a.meetingDate}T${a.meetingTime}`);
-      const dateB = new Date(`${b.meetingDate}T${b.meetingTime}`);
-      return dateB.getTime() - dateA.getTime();
+      return getMeetingSortValue(b.meetingDate, b.meetingTime) - getMeetingSortValue(a.meetingDate, a.meetingTime);
     });
   }, [meetings]);
 
@@ -273,6 +287,9 @@ export function Meetings() {
                         {meeting.title}
                       </h3>
                     </div>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Project: {meeting.projectName || projectNameById[meeting.projectId] || 'N/A'}
+                    </p>
                     
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className={statusInfo.color}>
@@ -290,19 +307,38 @@ export function Meetings() {
                   <div className="space-y-2 mb-4">
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <Calendar className="w-4 h-4 flex-shrink-0" />
-                      <span>
-                        {new Date(meeting.meetingDate).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </span>
+                      <span>{formatMeetingDate(meeting.meetingDate)}</span>
                     </div>
                     
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <Clock className="w-4 h-4 flex-shrink-0" />
-                      <span>{meeting.meetingTime?.slice(0, 5)}</span>
+                      <span>{formatMeetingTime(meeting.meetingTime)}</span>
                     </div>
+
+                    {normalizedStatus === 'scheduled' && (
+                      <>
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <Video className="w-4 h-4 flex-shrink-0" />
+                          <span>{meeting.platform?.trim() || 'Platform not set'}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <ExternalLink className="w-4 h-4 flex-shrink-0" />
+                          {toJoinHref(meeting.meetingLink) ? (
+                            <a
+                              href={toJoinHref(meeting.meetingLink) || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:text-blue-700 underline truncate"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Join meeting
+                            </a>
+                          ) : (
+                            <span>Join link not set</span>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Actions */}

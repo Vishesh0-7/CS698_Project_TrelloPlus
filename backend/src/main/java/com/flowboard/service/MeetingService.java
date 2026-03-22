@@ -14,7 +14,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -30,8 +32,7 @@ public class MeetingService {
 
     /**
      * Creates a new meeting for a project.
-     * Initializes meeting_members with all project members.
-     * Optionally adds additional members.
+      * Initializes meeting_members from selected project members.
      */
     public MeetingDTO createMeeting(CreateMeetingRequest request, User createdBy) {
         // Validate project exists and user is a project member
@@ -66,7 +67,7 @@ public class MeetingService {
 
         meeting = meetingRepository.save(meeting);
 
-        // Add all project members as meeting members (owner + project_members entries)
+        // Collect all valid project participant IDs (owner + project_members entries)
         List<UUID> projectMemberIds = projectMemberRepository.findProjectMemberRoles(project.getId())
             .stream()
             .map(row -> row[0] instanceof UUID ? (UUID) row[0] : UUID.fromString(row[0].toString()))
@@ -76,30 +77,26 @@ public class MeetingService {
             projectMemberIds.add(project.getOwner().getId());
         }
 
-        List<User> projectMembers = userRepository.findAllById(projectMemberIds);
-        for (User member : projectMembers) {
+        List<UUID> selectedMemberIds = request.getAdditionalMemberIds() != null && !request.getAdditionalMemberIds().isEmpty()
+            ? request.getAdditionalMemberIds().stream().filter(Objects::nonNull).distinct().collect(Collectors.toList())
+            : projectMemberIds;
+
+        if (selectedMemberIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one meeting member must be selected");
+        }
+
+        boolean hasInvalidSelection = selectedMemberIds.stream().anyMatch(memberId -> !projectMemberIds.contains(memberId));
+        if (hasInvalidSelection) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected meeting members must belong to the project");
+        }
+
+        List<User> selectedMembers = userRepository.findAllById(selectedMemberIds);
+        for (User member : selectedMembers) {
             MeetingMember meetingMember = MeetingMember.builder()
                 .meeting(meeting)
                 .user(member)
                 .build();
             meetingMemberRepository.save(meetingMember);
-        }
-
-        // Add any additional members requested
-        if (request.getAdditionalMemberIds() != null) {
-            for (UUID memberId : request.getAdditionalMemberIds()) {
-                User user = userRepository.findById(memberId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found: " + memberId));
-
-                // Check if already added (as project member)
-                if (!meetingMemberRepository.existsByMeetingIdAndUserId(meeting.getId(), memberId)) {
-                    MeetingMember meetingMember = MeetingMember.builder()
-                        .meeting(meeting)
-                        .user(user)
-                        .build();
-                    meetingMemberRepository.save(meetingMember);
-                }
-            }
         }
 
         return convertToDTO(meeting);
@@ -123,7 +120,12 @@ public class MeetingService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found");
         }
 
-        List<Meeting> meetings = meetingRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        List<Meeting> meetings = meetingRepository.findByProjectId(projectId);
+        meetings.sort(
+            Comparator.comparing(Meeting::getMeetingDate)
+                .thenComparing(meeting -> meeting.getMeetingTime() != null ? meeting.getMeetingTime() : LocalTime.MIDNIGHT)
+                .reversed()
+        );
         return meetings.stream()
             .map(this::convertToDTO)
             .collect(Collectors.toList());
@@ -267,6 +269,7 @@ public class MeetingService {
         return MeetingDTO.builder()
             .id(meeting.getId())
             .projectId(meeting.getProject().getId())
+            .projectName(meeting.getProject().getName())
             .title(meeting.getTitle())
             .description(meeting.getDescription())
             .meetingDate(meeting.getMeetingDate())

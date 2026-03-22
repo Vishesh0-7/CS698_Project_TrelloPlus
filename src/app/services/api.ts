@@ -106,6 +106,7 @@ export interface MeetingUserResponse {
 export interface MeetingResponse {
   id: string;
   projectId: string;
+  projectName?: string;
   title: string;
   description?: string;
   meetingDate: string;
@@ -126,6 +127,7 @@ export interface CreateMeetingApiRequest {
   meetingTime: string;
   platform?: string;
   meetingLink?: string;
+  additionalMemberIds?: string[];
 }
 
 export interface UpdateMeetingApiRequest {
