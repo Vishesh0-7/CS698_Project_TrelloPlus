@@ -3,9 +3,11 @@ import { Button } from '../components/ui/button';
 import { useNavigate } from 'react-router';
 import { ProjectCard } from '../components/ProjectCard';
 import { useProjectStore } from '../store/projectStore';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiService, mapProjectResponseToProject } from '../services/api';
 import { toast } from 'sonner';
+
+const DASHBOARD_SYNC_INTERVAL_MS = 5000;
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -14,10 +16,8 @@ export function Dashboard() {
   const shouldBlockInitialUIRef = useRef(projects.length === 0);
   const [isLoading, setIsLoading] = useState(shouldBlockInitialUIRef.current);
 
-  useEffect(() => {
-    const loadProjects = async () => {
-      const shouldBlockUI = shouldBlockInitialUIRef.current;
-      if (shouldBlockUI) {
+  const loadProjects = useCallback(async ({ showBlockingLoader = false, showErrorToast = false }: { showBlockingLoader?: boolean; showErrorToast?: boolean } = {}) => {
+      if (showBlockingLoader) {
         setIsLoading(true);
       }
 
@@ -26,16 +26,40 @@ export function Dashboard() {
         const convertedProjects = userProjects.map(mapProjectResponseToProject);
         setProjects(convertedProjects);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Failed to load projects');
+        if (showErrorToast) {
+          toast.error(error instanceof Error ? error.message : 'Failed to load projects');
+        }
       } finally {
-        if (shouldBlockUI) {
+        if (showBlockingLoader) {
           setIsLoading(false);
         }
       }
+    }, [setProjects]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const shouldBlockUI = shouldBlockInitialUIRef.current;
+    void loadProjects({ showBlockingLoader: shouldBlockUI, showErrorToast: true });
+    shouldBlockInitialUIRef.current = false;
+
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      void loadProjects();
     };
 
-    loadProjects();
-  }, [setProjects]);
+    const intervalId = window.setInterval(syncIfActive, DASHBOARD_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
+    };
+  }, [loadProjects]);
 
   // Empty State
   if (isLoading) {

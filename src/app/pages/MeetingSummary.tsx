@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { type ChangeRequest } from '../store/changeStore';
 import { Button } from '../components/ui/button';
@@ -34,6 +34,8 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   REJECTED: { label: 'Rejected', color: 'bg-red-50 text-red-700 border-red-200' },
 };
 
+const MEETING_SUMMARY_SYNC_INTERVAL_MS = 5000;
+
 export function MeetingSummary() {
   const { meetingId } = useParams<{ meetingId: string }>();
   const navigate = useNavigate();
@@ -59,33 +61,31 @@ export function MeetingSummary() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
 
-  const reloadSummaryAndApproval = async (id: string) => {
+  const reloadSummaryAndApproval = useCallback(async (id: string) => {
     const [summaryData, approvalData] = await Promise.all([
       apiService.getSummaryByMeeting(id),
       apiService.getApprovalStatus(id),
     ]);
     setSummary(summaryData);
     setApproval(approvalData);
-  };
+  }, []);
 
-  useEffect(() => {
-    const storedUser = localStorage.getItem('user');
-    let resolvedUserId: string | null = null;
-    if (storedUser) {
-      try {
-        resolvedUserId = JSON.parse(storedUser)?.id ?? null;
-        setCurrentUserId(resolvedUserId);
-      } catch {
-        resolvedUserId = null;
-        setCurrentUserId(null);
+  const loadMeetingSummaryData = useCallback(
+    async ({ showErrorToast = false }: { showErrorToast?: boolean } = {}) => {
+      if (!meetingId) return;
+
+      const storedUser = localStorage.getItem('user');
+      let resolvedUserId: string | null = null;
+      if (storedUser) {
+        try {
+          resolvedUserId = JSON.parse(storedUser)?.id ?? null;
+          setCurrentUserId(resolvedUserId);
+        } catch {
+          resolvedUserId = null;
+          setCurrentUserId(null);
+        }
       }
-    }
 
-    if (!meetingId) return;
-
-    let isMounted = true;
-
-    const loadData = async () => {
       try {
         const [meetingData, summaryData, approvalData] = await Promise.all([
           apiService.getMeeting(meetingId),
@@ -107,24 +107,43 @@ export function MeetingSummary() {
           }
         }
 
-        if (!isMounted) return;
         setMeeting(meetingData);
         setSummary(summaryData);
         setApproval(approvalData);
         setIsProjectOwner(owner);
       } catch (error) {
-        if (isMounted) {
+        if (showErrorToast) {
           toast.error(error instanceof Error ? error.message : 'Failed to load meeting summary');
         }
       }
+    },
+    [meetingId],
+  );
+
+  useEffect(() => {
+    if (!meetingId) return;
+
+    let isCancelled = false;
+
+    void loadMeetingSummaryData({ showErrorToast: true });
+
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      void loadMeetingSummaryData();
     };
 
-    void loadData();
+    const intervalId = window.setInterval(syncIfActive, MEETING_SUMMARY_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
 
     return () => {
-      isMounted = false;
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
     };
-  }, [meetingId]);
+  }, [meetingId, loadMeetingSummaryData]);
 
   const changeRequests = useMemo<ChangeRequest[]>(() => {
     if (!summary || !meeting) return [];

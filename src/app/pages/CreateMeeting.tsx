@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -15,6 +15,8 @@ interface ProjectMember {
   name: string;
   email: string;
 }
+
+const CREATE_MEETING_SYNC_INTERVAL_MS = 5000;
 
 export function CreateMeeting() {
   const navigate = useNavigate();
@@ -33,25 +35,54 @@ export function CreateMeeting() {
   const [link, setLink] = useState('');
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
-  // Load projects on mount
-  useEffect(() => {
-    const loadProjects = async () => {
-      try {
+  const loadProjects = useCallback(async ({ showLoading = false, showErrorToast = false }: { showLoading?: boolean; showErrorToast?: boolean } = {}) => {
+    try {
+      if (showLoading) {
         setLoadingProjects(true);
-        const userProjects = await apiService.getUserProjects();
-        setProjects(userProjects);
-        if (userProjects.length > 0) {
-          setSelectedProjectId(userProjects[0].id);
+      }
+
+      const userProjects = await apiService.getUserProjects();
+      setProjects(userProjects);
+      setSelectedProjectId((currentId) => {
+        if (currentId && userProjects.some((project) => project.id === currentId)) {
+          return currentId;
         }
-      } catch (error) {
+
+        return userProjects[0]?.id || '';
+      });
+    } catch (error) {
+      if (showErrorToast) {
         toast.error(error instanceof Error ? error.message : 'Failed to load projects');
-      } finally {
+      }
+    } finally {
+      if (showLoading) {
         setLoadingProjects(false);
       }
+    }
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    void loadProjects({ showLoading: true, showErrorToast: true });
+
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      void loadProjects();
     };
 
-    void loadProjects();
-  }, []);
+    const intervalId = window.setInterval(syncIfActive, CREATE_MEETING_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
+    };
+  }, [loadProjects]);
 
   // Load members when project is selected
   useEffect(() => {
@@ -74,10 +105,20 @@ export function CreateMeeting() {
         }));
         
         setProjectMembers(mappedMembers);
-        // Auto-select all project members
-        setSelectedMemberIds(mappedMembers.map((m) => m.id));
+        setSelectedMemberIds((previousIds) => {
+          const validSelected = previousIds.filter((memberId) =>
+            mappedMembers.some((member) => member.id === memberId)
+          );
+
+          if (validSelected.length > 0) {
+            return validSelected;
+          }
+
+          // Auto-select all members only when there is no current valid selection.
+          return mappedMembers.map((m) => m.id);
+        });
       } catch (error) {
-        toast.error('Failed to load project members');
+        toast.error(error instanceof Error ? error.message : 'Failed to load project members');
         setProjectMembers([]);
         setSelectedMemberIds([]);
       } finally {

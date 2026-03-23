@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { useProjectStore } from '../store/projectStore';
 import { useChangeStore, type ChangeRequest } from '../store/changeStore';
@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
 
 type Tab = 'board' | 'meetings' | 'decisions';
+const PROJECT_SYNC_INTERVAL_MS = 5000;
 
 export function ProjectView() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -193,45 +194,78 @@ export function ProjectView() {
     rollbackAvailable: false,
   });
 
+  const syncProjectData = useCallback(
+    async ({ showErrorToast = false }: { showErrorToast?: boolean } = {}) => {
+      if (!projectId) {
+        return;
+      }
+
+      try {
+        const [projectResponse, meetings, changes] = await Promise.all([
+          apiService.getProject(projectId),
+          apiService.getMeetingsByProject(projectId),
+          apiService.listChanges({ projectId }),
+        ]);
+
+        const mappedProject = mapProjectResponseToProject(projectResponse);
+        const existingProject = useProjectStore
+          .getState()
+          .projects.find((candidate) => candidate.id === projectId);
+
+        updateProject(projectId, {
+          name: mappedProject.name,
+          description: mappedProject.description,
+          boardId: mappedProject.boardId,
+          members: mappedProject.members,
+          columns: mappedProject.columns,
+          tasks: mappedProject.tasks,
+          decisions: existingProject?.decisions ?? [],
+        });
+
+        setProjectMeetings(meetings);
+        setMeetingsStore(meetings.map(mapMeetingToStore));
+        setChangesStore(changes.map(mapChangeToStore));
+      } catch (error) {
+        if (!showErrorToast) {
+          return;
+        }
+
+        toast.error(error instanceof Error ? error.message : 'Failed to load project data');
+      }
+    },
+    [projectId, setMeetingsStore, setChangesStore, updateProject],
+  );
+
   useEffect(() => {
     if (!projectId) {
       setProjectMeetings([]);
       return;
     }
 
-    let isMounted = true;
+    let isCancelled = false;
 
-    const loadProjectMeetings = async () => {
-      try {
-        const meetings = await apiService.getMeetingsByProject(projectId);
-        const changes = await apiService.listChanges({ projectId });
-        if (isMounted) {
-          setProjectMeetings(meetings);
-          setMeetingsStore(meetings.map(mapMeetingToStore));
-          setChangesStore(changes.map(mapChangeToStore));
-        }
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : 'Failed to load project meetings');
-        }
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
       }
+
+      void syncProjectData();
     };
 
-    void loadProjectMeetings();
+    void syncProjectData({ showErrorToast: true });
+
+    const intervalId = window.setInterval(syncIfActive, PROJECT_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
 
     return () => {
-      isMounted = false;
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
     };
-  }, [projectId]);
+  }, [projectId, syncProjectData]);
 
   const refreshProjectMeetings = async () => {
-    if (!projectId) return;
-
-    const meetings = await apiService.getMeetingsByProject(projectId);
-    const changes = await apiService.listChanges({ projectId });
-    setProjectMeetings(meetings);
-    setMeetingsStore(meetings.map(mapMeetingToStore));
-    setChangesStore(changes.map(mapChangeToStore));
+    await syncProjectData({ showErrorToast: true });
   };
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChangeStore, type ChangeRequest } from '../store/changeStore';
 import { useMeetingStore, type Meeting } from '../store/meetingStore';
 import { useNavigate } from 'react-router';
@@ -27,6 +27,8 @@ import { Calendar, Clock, Plus, FileText, ListChecks, Video, ExternalLink } from
 import { apiService, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
 import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
+
+const MEETINGS_SYNC_INTERVAL_MS = 5000;
 
 const statusConfig = {
   'scheduled': { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -116,8 +118,10 @@ export function Meetings() {
     rollbackAvailable: false,
   });
 
-  const loadMeetings = async () => {
-    setIsLoading(true);
+  const loadMeetings = useCallback(async ({ showLoadingState = false, showErrorToast = false }: { showLoadingState?: boolean; showErrorToast?: boolean } = {}) => {
+    if (showLoadingState) {
+      setIsLoading(true);
+    }
 
     try {
       const projects = await apiService.getUserProjects();
@@ -145,11 +149,15 @@ export function Meetings() {
       setMeetingsStore(uniqueMeetings.map(mapMeetingToStore));
       setChangesStore(uniqueChanges.map(mapChangeToStore));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
+      if (showErrorToast) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
+      }
     } finally {
-      setIsLoading(false);
+      if (showLoadingState) {
+        setIsLoading(false);
+      }
     }
-  };
+  }, [setMeetingsStore, setChangesStore]);
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {
     setRescheduleMeeting(meeting);
@@ -175,7 +183,7 @@ export function Meetings() {
       });
       toast.success('Meeting rescheduled');
       setRescheduleMeeting(null);
-      await loadMeetings();
+      await loadMeetings({ showErrorToast: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to reschedule meeting');
     } finally {
@@ -190,7 +198,7 @@ export function Meetings() {
       await apiService.deleteMeeting(removeMeeting.id);
       toast.success('Meeting removed');
       setRemoveMeeting(null);
-      await loadMeetings();
+      await loadMeetings({ showErrorToast: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to remove meeting');
     } finally {
@@ -199,8 +207,27 @@ export function Meetings() {
   };
 
   useEffect(() => {
-    void loadMeetings();
-  }, []);
+    let isCancelled = false;
+
+    void loadMeetings({ showLoadingState: true, showErrorToast: true });
+
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      void loadMeetings();
+    };
+
+    const intervalId = window.setInterval(syncIfActive, MEETINGS_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
+    };
+  }, [loadMeetings]);
 
   const normalizeMeetingStatusLabel = (status: string) => {
     switch (status) {

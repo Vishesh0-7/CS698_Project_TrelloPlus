@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { type ChangeRequest } from '../store/changeStore';
 import { Button } from '../components/ui/button';
@@ -16,6 +16,8 @@ const changeTypeConfig: Record<string, { label: string; color: string }> = {
   CREATE_CARD: { label: 'Create Card', color: 'bg-green-50 text-green-700 border-green-200' },
   DELETE_CARD: { label: 'Delete Card', color: 'bg-red-50 text-red-700 border-red-200' },
 };
+
+const MEETING_CHANGES_SYNC_INTERVAL_MS = 5000;
 
 export function MeetingChanges() {
   const { meetingId } = useParams<{ meetingId: string }>();
@@ -44,7 +46,7 @@ export function MeetingChanges() {
     return raw;
   };
 
-  const refreshMeetingChanges = async (activeMeetingId: string) => {
+  const refreshMeetingChanges = useCallback(async (activeMeetingId: string) => {
     const [meetingData, changeData] = await Promise.all([
       apiService.getMeeting(activeMeetingId),
       apiService.listChanges({ meetingId: activeMeetingId }),
@@ -89,9 +91,9 @@ export function MeetingChanges() {
         };
       })
     );
-  };
+  }, []);
 
-  const refreshProjectBoardState = async (projectId: string) => {
+  const refreshProjectBoardState = useCallback(async (projectId: string) => {
     const [allProjects, refreshedProject] = await Promise.all([
       apiService.getUserProjects(),
       apiService.getProject(projectId),
@@ -103,7 +105,68 @@ export function MeetingChanges() {
 
     setCurrentProject(refreshedProject);
     setProjects(mergedProjects.map(mapProjectResponseToProject));
-  };
+  }, [setProjects]);
+
+  const loadMeetingChangesData = useCallback(async ({ showErrorToast = false }: { showErrorToast?: boolean } = {}) => {
+    if (!meetingId) return;
+
+    try {
+      const [meetingData, changeData] = await Promise.all([
+        apiService.getMeeting(meetingId),
+        apiService.listChanges({ meetingId }),
+      ]);
+
+      setMeeting(meetingData);
+      const storedUser = localStorage.getItem('user');
+      const currentUserId = storedUser ? JSON.parse(storedUser)?.id : null;
+      const projectData = await apiService.getProject(meetingData.projectId);
+      setCurrentProject(projectData);
+      const owner = projectData.members.find((member) => member.role.toLowerCase() === 'owner');
+      setCanApplyChanges(Boolean(currentUserId && owner?.id === currentUserId));
+      setChanges(
+        changeData.map((c) => {
+          let before: any;
+          let after: any;
+
+          try {
+            before = c.beforeState ? JSON.parse(c.beforeState) : undefined;
+          } catch {
+            before = undefined;
+          }
+
+          try {
+            after = c.afterState ? JSON.parse(c.afterState) : undefined;
+          } catch {
+            after = undefined;
+          }
+
+          return {
+            id: c.id,
+            meetingId: c.meetingId,
+            meetingTitle: meetingData.title,
+            type: c.changeType as ChangeRequest['type'],
+            status: c.status as ChangeRequest['status'],
+            requestedBy: 'system',
+            requestedAt: c.createdAt,
+            projectId: meetingData.projectId,
+            before,
+            after,
+            affectedCards: [],
+            affectedStages: [],
+            affectedMembers: [],
+            riskLevel: 'LOW',
+            approvals: [],
+            requiredApprovals: 0,
+            rollbackAvailable: false,
+          };
+        })
+      );
+    } catch (error) {
+      if (showErrorToast) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load meeting changes');
+      }
+    }
+  }, [meetingId]);
 
   const getTargetCardId = (change: ChangeRequest) => {
     const beforeId = change.before && typeof change.before === 'object' ? (change.before as any).id : undefined;
@@ -128,75 +191,27 @@ export function MeetingChanges() {
   useEffect(() => {
     if (!meetingId) return;
 
-    let isMounted = true;
+    let isCancelled = false;
 
-    const loadData = async () => {
-      try {
-        const [meetingData, changeData] = await Promise.all([
-          apiService.getMeeting(meetingId),
-          apiService.listChanges({ meetingId }),
-        ]);
+    void loadMeetingChangesData({ showErrorToast: true });
 
-        if (!isMounted) return;
-
-        setMeeting(meetingData);
-        const storedUser = localStorage.getItem('user');
-        const currentUserId = storedUser ? JSON.parse(storedUser)?.id : null;
-        const projectData = await apiService.getProject(meetingData.projectId);
-        setCurrentProject(projectData);
-        const owner = projectData.members.find((member) => member.role.toLowerCase() === 'owner');
-        setCanApplyChanges(Boolean(currentUserId && owner?.id === currentUserId));
-        setChanges(
-          changeData.map((c) => {
-            let before: any;
-            let after: any;
-
-            try {
-              before = c.beforeState ? JSON.parse(c.beforeState) : undefined;
-            } catch {
-              before = undefined;
-            }
-
-            try {
-              after = c.afterState ? JSON.parse(c.afterState) : undefined;
-            } catch {
-              after = undefined;
-            }
-
-            return {
-              id: c.id,
-              meetingId: c.meetingId,
-              meetingTitle: meetingData.title,
-              type: c.changeType as ChangeRequest['type'],
-              status: c.status as ChangeRequest['status'],
-              requestedBy: 'system',
-              requestedAt: c.createdAt,
-              projectId: meetingData.projectId,
-              before,
-              after,
-              affectedCards: [],
-              affectedStages: [],
-              affectedMembers: [],
-              riskLevel: 'LOW',
-              approvals: [],
-              requiredApprovals: 0,
-              rollbackAvailable: false,
-            };
-          })
-        );
-      } catch (error) {
-        if (isMounted) {
-          toast.error(error instanceof Error ? error.message : 'Failed to load meeting changes');
-        }
+    const syncIfActive = () => {
+      if (isCancelled || document.visibilityState !== 'visible') {
+        return;
       }
+
+      void loadMeetingChangesData();
     };
 
-    void loadData();
+    const intervalId = window.setInterval(syncIfActive, MEETING_CHANGES_SYNC_INTERVAL_MS);
+    document.addEventListener('visibilitychange', syncIfActive);
 
     return () => {
-      isMounted = false;
+      isCancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', syncIfActive);
     };
-  }, [meetingId]);
+  }, [meetingId, loadMeetingChangesData]);
 
   const handleApplyToBoard = async (changeId: string) => {
     if (!meetingId || !meeting?.projectId) return;
