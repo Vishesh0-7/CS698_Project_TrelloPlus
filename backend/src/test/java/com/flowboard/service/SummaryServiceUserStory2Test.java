@@ -59,6 +59,9 @@ class SummaryServiceUserStory2Test {
     @Mock
     private CardRepository cardRepository;
 
+    @Mock
+    private BoardBroadcastService boardBroadcastService;
+
     private SummaryService summaryService;
     private Meeting testMeeting;
     private User testUser;
@@ -79,7 +82,8 @@ class SummaryServiceUserStory2Test {
             boardRepository,
             stageRepository,
             cardRepository,
-            new ObjectMapper()
+            new ObjectMapper(),
+            boardBroadcastService
         );
 
         UUID userId = UUID.randomUUID();

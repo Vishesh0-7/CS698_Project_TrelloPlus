@@ -38,6 +38,7 @@ public class SummaryService {
     private final StageRepository stageRepository;
     private final CardRepository cardRepository;
     private final ObjectMapper objectMapper;
+    private final BoardBroadcastService broadcastService;
 
     private static final Set<Meeting.MeetingStatus> FINALIZED_MEETING_STATUSES = Set.of(
         Meeting.MeetingStatus.APPROVED,
@@ -48,17 +49,11 @@ public class SummaryService {
      * Generates summary from meeting transcript using AI analysis
      * Creates action items, decisions, and changes
      * Initiates approval workflow for the summary
-     * Verifies user is meeting member
      */
     public MeetingSummaryDTO generateSummary(UUID meetingId, UUID userId) {
         log.info("Generating summary for meeting: {}", meetingId);
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a meeting member
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
 
         if (meeting.getTranscript() == null || meeting.getTranscript().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting has no transcript");
@@ -137,6 +132,7 @@ public class SummaryService {
                     .status(Change.ChangeStatus.PENDING)
                     .build();
                 changeRepository.save(change);
+                broadcastService.broadcastChangeCreated(meeting.getProject().getId(), toChangeEvent(change));
             } catch (IllegalArgumentException e) {
                 log.warn("Invalid change type: {}, skipping change", changeData.type);
             }
@@ -153,7 +149,9 @@ public class SummaryService {
         meetingRepository.save(meeting);
         log.info("Meeting status updated to PENDING_APPROVAL");
 
-        return convertToDTO(summary);
+        MeetingSummaryDTO result = convertToDTO(summary);
+        broadcastService.broadcastSummaryGenerated(meeting.getProject().getId(), meeting.getId(), result);
+        return result;
     }
 
     /**
@@ -185,33 +183,20 @@ public class SummaryService {
     }
 
     /**
-     * Get meeting summary - verifies user is meeting member
+     * Get meeting summary
      */
     public MeetingSummaryDTO getSummary(UUID summaryId, UUID userId) {
         MeetingSummary summary = meetingSummaryRepository.findById(summaryId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Summary not found"));
-
-        // Verify user is a member of the meeting
-        UUID meetingId = summary.getMeeting().getId();
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
-
         return convertToDTO(summary);
     }
 
     /**
-     * Get summary for a meeting - verifies user is meeting member
+     * Get summary for a meeting
      */
     public MeetingSummaryDTO getSummaryByMeeting(UUID meetingId, UUID userId) {
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
-
-        // Verify user is a member of the meeting
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
-
         return convertToDTO(summary);
     }
 
@@ -239,6 +224,7 @@ public class SummaryService {
             .build();
 
         actionItemRepository.save(actionItem);
+        broadcastService.broadcastActionItemCreated(meeting.getProject().getId(), meetingId, toActionItemEvent(actionItem));
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
         return convertToDTO(summary);
@@ -266,6 +252,7 @@ public class SummaryService {
         }
 
         actionItemRepository.save(actionItem);
+        broadcastService.broadcastActionItemUpdated(meeting.getProject().getId(), meeting.getId(), toActionItemEvent(actionItem));
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meeting.getId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
@@ -279,7 +266,9 @@ public class SummaryService {
         UUID meetingId = actionItem.getMeeting().getId();
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
         assertProjectOwner(meeting, actor);
+        UUID actionItemEntityId = actionItem.getId();
         actionItemRepository.delete(actionItem);
+        broadcastService.broadcastActionItemDeleted(meeting.getProject().getId(), meetingId, actionItemEntityId);
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
@@ -300,6 +289,7 @@ public class SummaryService {
             .build();
 
         decisionRepository.save(decision);
+        broadcastService.broadcastDecisionCreated(meeting.getProject().getId(), meetingId, toDecisionEvent(decision));
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
@@ -324,6 +314,7 @@ public class SummaryService {
         }
 
         decisionRepository.save(decision);
+        broadcastService.broadcastDecisionUpdated(meeting.getProject().getId(), meeting.getId(), toDecisionEvent(decision));
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meeting.getId())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
@@ -337,7 +328,9 @@ public class SummaryService {
         UUID meetingId = decision.getMeeting().getId();
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
         assertProjectOwner(meeting, actor);
+        UUID decisionEntityId = decision.getId();
         decisionRepository.delete(decision);
+        broadcastService.broadcastDecisionDeleted(meeting.getProject().getId(), meetingId, decisionEntityId);
 
         MeetingSummary summary = meetingSummaryRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No summary found for meeting"));
@@ -631,6 +624,42 @@ public class SummaryService {
             log.warn("Failed to serialize mock change payload: {}", ex.getMessage());
             return "{}";
         }
+    }
+
+    private Map<String, Object> toActionItemEvent(ActionItem actionItem) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("id", actionItem.getId());
+        event.put("meetingId", actionItem.getMeeting().getId());
+        event.put("description", actionItem.getDescription());
+        event.put("sourceContext", actionItem.getSourceContext());
+        event.put("priority", actionItem.getPriority() != null ? actionItem.getPriority().name() : null);
+        event.put("status", actionItem.getStatus() != null ? actionItem.getStatus().name() : null);
+        event.put("approvalStatus", actionItem.getApprovalStatus() != null ? actionItem.getApprovalStatus().name() : null);
+        return event;
+    }
+
+    private Map<String, Object> toDecisionEvent(Decision decision) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("id", decision.getId());
+        event.put("meetingId", decision.getMeeting().getId());
+        event.put("description", decision.getDescription());
+        event.put("sourceContext", decision.getSourceContext());
+        event.put("impactSummary", decision.getImpactSummary());
+        event.put("approvalStatus", decision.getApprovalStatus() != null ? decision.getApprovalStatus().name() : null);
+        return event;
+    }
+
+    private Map<String, Object> toChangeEvent(Change change) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("id", change.getId());
+        event.put("meetingId", change.getMeeting().getId());
+        event.put("projectId", change.getMeeting().getProject().getId());
+        event.put("changeType", change.getChangeType() != null ? change.getChangeType().name() : null);
+        event.put("beforeState", change.getBeforeState());
+        event.put("afterState", change.getAfterState());
+        event.put("status", change.getStatus() != null ? change.getStatus().name() : null);
+        event.put("createdAt", change.getCreatedAt());
+        return event;
     }
 
     private record BoardChangeContext(Stage primaryStage, Stage secondaryStage, Card sampleCard) {}

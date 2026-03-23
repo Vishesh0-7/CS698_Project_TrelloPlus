@@ -29,6 +29,7 @@ public class MeetingService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
+    private final BoardBroadcastService broadcastService;
 
     /**
      * Creates a new meeting for a project.
@@ -99,40 +100,28 @@ public class MeetingService {
             meetingMemberRepository.save(meetingMember);
         }
 
-        return convertToDTO(meeting);
+        MeetingDTO result = convertToDTO(meeting);
+        // Broadcast meeting creation to all connected clients
+        broadcastService.broadcastMeetingCreated(project.getId(), result);
+        return result;
     }
 
     /**
-     * Get a meeting by ID - verifies user is project member
+     * Get a meeting by ID
      */
     public MeetingDTO getMeeting(UUID meetingId, UUID userId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a member of the meeting's project
-        UUID projectId = meeting.getProject().getId();
-        boolean isProjectMember = meeting.getProject().getOwner().getId().equals(userId)
-            || projectMemberRepository.findMemberRole(projectId, userId).isPresent();
-        if (!isProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
-        }
-
         return convertToDTO(meeting);
     }
 
     /**
-     * Get all meetings for a project - verifies user is project member
+     * Get all meetings for a project
      */
     public List<MeetingDTO> getMeetingsByProject(UUID projectId, UUID userId) {
         // Verify project exists
-        Project project = projectRepository.findById(projectId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found"));
-
-        // Verify user is a member of the project
-        boolean isProjectMember = project.getOwner().getId().equals(userId)
-            || projectMemberRepository.findMemberRole(projectId, userId).isPresent();
-        if (!isProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        if (!projectRepository.existsById(projectId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found");
         }
 
         List<Meeting> meetings = meetingRepository.findByProjectId(projectId);
@@ -149,19 +138,10 @@ public class MeetingService {
     /**
      * Update meeting transcript and mark as ended (idempotent)
      * Allows being called multiple times on meetings in any status that can accept transcripts
-     * Verifies user is project member
      */
     public MeetingDTO endMeeting(UUID meetingId, String transcript, UUID userId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a member of the meeting's project
-        UUID projectId = meeting.getProject().getId();
-        boolean isProjectMember = meeting.getProject().getOwner().getId().equals(userId)
-            || projectMemberRepository.findMemberRole(projectId, userId).isPresent();
-        if (!isProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
-        }
 
         // Update transcript
         if (transcript != null && !transcript.isEmpty()) {
@@ -176,7 +156,10 @@ public class MeetingService {
         // If already PENDING_APPROVAL or beyond, just keep current status (idempotent)
         
         meeting = meetingRepository.save(meeting);
-        return convertToDTO(meeting);
+        MeetingDTO result = convertToDTO(meeting);
+        // Broadcast meeting status update to all connected clients
+        broadcastService.broadcastMeetingUpdated(meeting.getProject().getId(), result);
+        return result;
     }
 
     /**
@@ -211,7 +194,10 @@ public class MeetingService {
         meeting.setMeetingLink(request.getMeetingLink());
 
         meeting = meetingRepository.save(meeting);
-        return convertToDTO(meeting);
+        MeetingDTO result = convertToDTO(meeting);
+        // Broadcast meeting update to all connected clients
+        broadcastService.broadcastMeetingUpdated(projectId, result);
+        return result;
     }
 
     /**
@@ -232,33 +218,21 @@ public class MeetingService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
         }
 
+        // Broadcast meeting deletion to all connected clients
+        broadcastService.broadcastMeetingDeleted(projectId, meetingId);
+
         meetingRepository.delete(meeting);
     }
 
     /**
-     * Add a user to a meeting - verifies actor is project member
+     * Add a user to a meeting
      */
     public void addMeetingMember(UUID meetingId, UUID userIdToAdd, UUID actorUserId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
 
-        // Verify actor is a member of the meeting's project
-        UUID projectId = meeting.getProject().getId();
-        boolean isActorProjectMember = meeting.getProject().getOwner().getId().equals(actorUserId)
-            || projectMemberRepository.findMemberRole(projectId, actorUserId).isPresent();
-        if (!isActorProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
-        }
-
         User user = userRepository.findById(userIdToAdd)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
-
-        // Verify user being added is also a project member
-        boolean isTargetProjectMember = meeting.getProject().getOwner().getId().equals(userIdToAdd)
-            || projectMemberRepository.findMemberRole(projectId, userIdToAdd).isPresent();
-        if (!isTargetProjectMember) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add user who is not a project member");
-        }
 
         if (meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userIdToAdd)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User is already a meeting member");
@@ -269,43 +243,37 @@ public class MeetingService {
             .user(user)
             .build();
         meetingMemberRepository.save(meetingMember);
+
+        // Broadcast meeting member addition to all connected clients
+        broadcastService.broadcastMeetingMemberAdded(meeting.getProject().getId(), meetingId, user.getFullName());
     }
 
     /**
-     * Remove a user from a meeting - verifies actor is project member
+     * Remove a user from a meeting
      */
-    public void removeMeetingMember(UUID meetingId, UUID userIdToRemove, UUID actorUserId) {
+    public void removeMeetingMember(UUID meetingId, UUID userId, UUID actorUserId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
 
-        // Verify actor is a member of the meeting's project
-        UUID projectId = meeting.getProject().getId();
-        boolean isActorProjectMember = meeting.getProject().getOwner().getId().equals(actorUserId)
-            || projectMemberRepository.findMemberRole(projectId, actorUserId).isPresent();
-        if (!isActorProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
-        }
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
 
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userIdToRemove)) {
+        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting member not found");
         }
 
-        meetingMemberRepository.deleteByMeetingIdAndUserId(meetingId, userIdToRemove);
+        meetingMemberRepository.deleteByMeetingIdAndUserId(meetingId, userId);
+
+        // Broadcast meeting member removal to all connected clients
+        broadcastService.broadcastMeetingMemberRemoved(meeting.getProject().getId(), meetingId, user.getFullName());
     }
 
     /**
-     * Get all members of a meeting - verifies user is project member
+     * Get all members of a meeting
      */
     public List<User> getMeetingMembers(UUID meetingId, UUID userId) {
-        Meeting meeting = meetingRepository.findById(meetingId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a member of the meeting's project
-        UUID projectId = meeting.getProject().getId();
-        boolean isProjectMember = meeting.getProject().getOwner().getId().equals(userId)
-            || projectMemberRepository.findMemberRole(projectId, userId).isPresent();
-        if (!isProjectMember) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this project");
+        if (!meetingRepository.existsById(meetingId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found");
         }
 
         return meetingMemberRepository.findByMeetingId(meetingId)

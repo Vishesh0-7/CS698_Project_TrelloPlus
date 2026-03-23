@@ -4,6 +4,7 @@ import com.flowboard.dto.*;
 import com.flowboard.service.JWTService;
 import com.flowboard.service.ProjectService;
 import com.flowboard.service.RateLimitService;
+import com.flowboard.service.BoardBroadcastService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +21,7 @@ public class BoardController {
     private final ProjectService projectService;
     private final JWTService jwtService;
     private final RateLimitService rateLimitService;
+    private final BoardBroadcastService broadcastService;
 
     @PostMapping("/{boardId}/stages")
     public ResponseEntity<StageDTO> addStage(

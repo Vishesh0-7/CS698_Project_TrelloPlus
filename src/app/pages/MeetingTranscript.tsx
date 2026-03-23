@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { Button } from '../components/ui/button';
 import { Textarea } from '../components/ui/textarea';
@@ -6,8 +6,6 @@ import { ArrowLeft, Sparkles, Loader2, Video, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner';
 import { apiService, type MeetingResponse } from '../services/api';
 import { formatMeetingDate, formatMeetingTime } from '../utils/meetingDateTime';
-
-const MEETING_TRANSCRIPT_SYNC_INTERVAL_MS = 5000;
 
 export function MeetingTranscript() {
   const { meetingId } = useParams<{ meetingId: string }>();
@@ -24,43 +22,30 @@ export function MeetingTranscript() {
     return `https://${trimmed}`;
   };
 
-  const loadMeeting = useCallback(async ({ showErrorToast = false }: { showErrorToast?: boolean } = {}) => {
-    if (!meetingId) return;
-
-    try {
-      const meetingData = await apiService.getMeeting(meetingId);
-      setMeeting(meetingData);
-    } catch (error) {
-      if (showErrorToast) {
-        toast.error(error instanceof Error ? error.message : 'Failed to load meeting');
-      }
-    }
-  }, [meetingId]);
-
   useEffect(() => {
     if (!meetingId) return;
 
-    let isCancelled = false;
+    let isMounted = true;
 
-    void loadMeeting({ showErrorToast: true });
-
-    const syncIfActive = () => {
-      if (isCancelled || document.visibilityState !== 'visible') {
-        return;
+    const loadMeeting = async () => {
+      try {
+        const meetingData = await apiService.getMeeting(meetingId);
+        if (isMounted) {
+          setMeeting(meetingData);
+        }
+      } catch (error) {
+        if (isMounted) {
+          toast.error(error instanceof Error ? error.message : 'Failed to load meeting');
+        }
       }
-
-      void loadMeeting();
     };
 
-    const intervalId = window.setInterval(syncIfActive, MEETING_TRANSCRIPT_SYNC_INTERVAL_MS);
-    document.addEventListener('visibilitychange', syncIfActive);
+    void loadMeeting();
 
     return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', syncIfActive);
+      isMounted = false;
     };
-  }, [meetingId, loadMeeting]);
+  }, [meetingId]);
 
   if (!meeting) {
     return (

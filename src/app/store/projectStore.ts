@@ -93,6 +93,19 @@ interface ProjectStore {
   updateUser: (updates: Partial<UserProfile>) => void;
   addTeamMember: (member: TeamMember) => void;
   removeTeamMember: (memberId: string) => void;
+  
+  // Real-time update methods for WebSocket board changes
+  addCardToBoard: (card: any) => void;
+  updateCardFromRealTime: (card: any) => void;
+  deleteCardFromRealTime: (stageId: string, cardId: string) => void;
+  addStageToBoard: (stage: any) => void;
+  updateStageFromRealTime: (stage: any) => void;
+  deleteStageFromBoard: (stageId: string) => void;
+  
+  // Team member real-time handlers
+  addTeamMemberToProject: (projectId: string, memberId: string, member: any) => void;
+  removeTeamMemberFromProject: (projectId: string, memberId: string) => void;
+  updateTeamMemberRole: (projectId: string, memberId: string, newRole: string) => void;
 }
 
 // Get initial user from localStorage
@@ -236,5 +249,150 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   
   removeTeamMember: (memberId) => set((state) => ({
     teamMembers: state.teamMembers.filter((m) => m.id !== memberId),
+  })),
+  
+  // Real-time update methods for WebSocket board changes
+  addCardToBoard: (card) => set((state) => {
+    // Find the project and stage based on the card data
+    const updatedProjects = state.projects.map((project) => {
+      const column = project.columns.find((col) => col.id === card.stageId);
+      if (!column) return project;
+      
+      const newTask: BoardTask = {
+        id: card.id,
+        title: card.title,
+        description: card.description || '',
+        assignee: card.assigneeId ? {
+          id: card.assigneeId,
+          name: card.assigneeName || 'Unassigned',
+        } : undefined,
+        priority: card.priority || 'MEDIUM',
+        createdDate: card.createdDate || new Date().toISOString(),
+        columnId: card.stageId,
+      };
+      
+      return {
+        ...project,
+        tasks: [...project.tasks, newTask],
+      };
+    });
+    return { projects: updatedProjects };
+  }),
+  
+  updateCardFromRealTime: (card) => set((state) => {
+    console.log('[STORE] updateCardFromRealTime called with card:', card);
+    console.log('[STORE] Current projects:', state.projects);
+    const updatedProjects = state.projects.map((project) => {
+      const taskIndex = project.tasks.findIndex((t) => t.id === card.id);
+      if (taskIndex === -1) {
+        console.log('[STORE] Card not found in project', project.id);
+        return project;
+      }
+      
+      const oldTask = project.tasks[taskIndex];
+      console.log('[STORE] Found task in project', project.id, 'oldTask:', oldTask);
+      console.log('[STORE] Project columns:', project.columns);
+      console.log('[STORE] Updating columnId from', oldTask.columnId, 'to', card.stageId);
+      
+      // Check if the stageId matches a column in this project
+      const columnExists = project.columns.some(col => col.id === card.stageId);
+      console.log('[STORE] Column exists for stageId', card.stageId, '?', columnExists);
+      
+      const updatedTasks = [...project.tasks];
+      updatedTasks[taskIndex] = {
+        ...updatedTasks[taskIndex],
+        title: card.title,
+        description: card.description || '',
+        assignee: card.assigneeId ? {
+          id: card.assigneeId,
+          name: card.assigneeName || 'Unassigned',
+        } : undefined,
+        priority: card.priority || 'MEDIUM',
+        columnId: card.stageId,  // CRITICAL: Update the stage/column ID when card moves
+      };
+      
+      console.log('[STORE] Updated task:', updatedTasks[taskIndex]);
+      return { ...project, tasks: updatedTasks };
+    });
+    console.log('[STORE] Projects after update:', updatedProjects);
+    return { projects: updatedProjects };
+  }),
+  
+  deleteCardFromRealTime: (stageId, cardId) => set((state) => ({
+    projects: state.projects.map((p) => ({
+      ...p,
+      tasks: p.tasks.filter((t) => t.id !== cardId),
+    })),
+  })),
+  
+  addStageToBoard: (stage) => set((state) => {
+    const updatedProjects = state.projects.map((project) => {
+      const newColumn: BoardColumn = {
+        id: stage.id,
+        title: stage.title,
+        color: stage.color || '#000000',
+      };
+      
+      return {
+        ...project,
+        columns: [...project.columns, newColumn],
+      };
+    });
+    return { projects: updatedProjects };
+  }),
+  
+  updateStageFromRealTime: (stage) => set((state) => {
+    const updatedProjects = state.projects.map((project) => {
+      const columnIndex = project.columns.findIndex((c) => c.id === stage.id);
+      if (columnIndex === -1) return project;
+      
+      const updatedColumns = [...project.columns];
+      updatedColumns[columnIndex] = {
+        ...updatedColumns[columnIndex],
+        title: stage.title,
+        color: stage.color || updatedColumns[columnIndex].color,
+      };
+      
+      return { ...project, columns: updatedColumns };
+    });
+    return { projects: updatedProjects };
+  }),
+  
+  deleteStageFromBoard: (stageId) => set((state) => ({
+    projects: state.projects.map((p) => ({
+      ...p,
+      columns: p.columns.filter((c) => c.id !== stageId),
+      tasks: p.tasks.filter((t) => t.columnId !== stageId),
+    })),
+  })),
+  
+  // Team member real-time handlers
+  addTeamMemberToProject: (projectId, memberId, member) => set((state) => ({
+    projects: state.projects.map((p) =>
+      p.id === projectId 
+        ? { ...p, members: [...p.members, { id: memberId, name: member.name, email: member.email, role: member.role || 'viewer' }] }
+        : p
+    ),
+  })),
+  
+  removeTeamMemberFromProject: (projectId, memberId) => set((state) => ({
+    projects: state.projects.map((p) =>
+      p.id === projectId 
+        ? { ...p, members: p.members.filter((m) => m.id !== memberId) }
+        : p
+    ),
+  })),
+  
+  updateTeamMemberRole: (projectId, memberId, newRole) => set((state) => ({
+    projects: state.projects.map((p) =>
+      p.id === projectId 
+        ? { 
+            ...p, 
+            members: p.members.map((m) => 
+              m.id === memberId ? { ...m, role: newRole as any } : m
+            ) 
+          }
+        : p
+    ),
   })),
 }));

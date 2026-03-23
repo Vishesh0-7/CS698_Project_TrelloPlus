@@ -24,6 +24,7 @@ public class ChangeApprovalService {
     private final ChangeApprovalResponseRepository changeApprovalResponseRepository;
     private final MeetingMemberRepository meetingMemberRepository;
     private final ChangeAuditEntryRepository changeAuditEntryRepository;
+    private final BoardBroadcastService broadcastService;
 
     public ApprovalStatusDTO decide(UUID changeId, User actor, ChangeDecisionRequest request) {
         Change change = changeRepository.findById(changeId)
@@ -48,6 +49,15 @@ public class ChangeApprovalService {
 
         transitionChangeStatus(change, approvalRequest.getId(), approvalRequest.getRequiredApprovals());
         audit(change, actor, mapAuditAction(decision), "{\"decision\":\"" + decision.name() + "\"}");
+
+        UUID projectId = change.getMeeting().getProject().getId();
+        broadcastService.broadcastChangeApprovalChanged(
+            projectId,
+            changeId,
+            decision.name(),
+            request.getFeedback()
+        );
+        broadcastService.broadcastChangeStatusChanged(projectId, changeId, change.getStatus().name());
 
         return getApprovalStatus(changeId);
     }

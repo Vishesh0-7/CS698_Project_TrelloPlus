@@ -28,6 +28,7 @@ public class ChangeApplicationService {
     private final ChangeSnapshotRepository changeSnapshotRepository;
     private final ChangeAuditEntryRepository changeAuditEntryRepository;
     private final ObjectMapper objectMapper;
+    private final BoardBroadcastService broadcastService;
 
     public ChangeApplyResultDTO applyChange(UUID changeId, User actor) {
         Change change = changeRepository.findById(changeId)
@@ -51,6 +52,7 @@ public class ChangeApplicationService {
 
         change.setStatus(Change.ChangeStatus.APPLYING);
         changeRepository.save(change);
+        broadcastService.broadcastChangeStatusChanged(change.getMeeting().getProject().getId(), changeId, Change.ChangeStatus.APPLYING.name());
         audit(change, actor, ChangeAuditEntry.AuditAction.APPLICATION_STARTED, "{\"status\":\"APPLYING\"}");
 
         ChangeSnapshot snapshot = createSnapshot(change, board);
@@ -62,6 +64,8 @@ public class ChangeApplicationService {
             change.setAppliedBy(actor);
             change.setAppliedAt(LocalDateTime.now());
             changeRepository.save(change);
+            broadcastService.broadcastChangeStatusChanged(change.getMeeting().getProject().getId(), changeId, Change.ChangeStatus.APPLIED.name());
+            broadcastService.broadcastChangeApplied(change.getMeeting().getProject().getId(), changeId);
 
             snapshot.setVerificationStatus(ChangeSnapshot.VerificationStatus.VERIFIED);
             snapshot.setAppliedAt(LocalDateTime.now());
@@ -81,6 +85,7 @@ public class ChangeApplicationService {
 
             change.setStatus(Change.ChangeStatus.ROLLED_BACK);
             changeRepository.save(change);
+            broadcastService.broadcastChangeStatusChanged(change.getMeeting().getProject().getId(), changeId, Change.ChangeStatus.ROLLED_BACK.name());
             audit(change, actor, ChangeAuditEntry.AuditAction.ROLLED_BACK, "{\"reason\":\"" + safe(ex.getMessage()) + "\"}");
 
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Change application failed: " + ex.getMessage());

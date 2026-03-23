@@ -40,6 +40,7 @@ public class ProjectService {
     private final ProjectMemberRepository projectMemberRepository;
     private final AIEngine aiEngine;
     private final BoardGenerator boardGenerator;
+    private final BoardBroadcastService broadcastService;
 
     private enum ProjectMemberRole {
         OWNER,
@@ -103,7 +104,9 @@ public class ProjectService {
 
         if (!generateTasks) {
             Board emptyBoard = boardGenerator.generateEmptyBoard(project);
-            return toProjectDTO(project, emptyBoard);
+            ProjectDTO result = toProjectDTO(project, emptyBoard);
+            broadcastService.broadcastProjectCreated(result);
+            return result;
         }
 
         // Generate AI analysis
@@ -115,7 +118,9 @@ public class ProjectService {
         // Generate board
         Board board = boardGenerator.generateBoard(project, analysisResult);
 
-        return toProjectDTO(project, board);
+        ProjectDTO result = toProjectDTO(project, board);
+        broadcastService.broadcastProjectCreated(result);
+        return result;
     }
 
     @Transactional
@@ -168,7 +173,9 @@ public class ProjectService {
 
         List<Board> boards = boardRepository.findByProjectId(projectId);
         Board board = boards.isEmpty() ? null : boards.get(0);
-        return toProjectDTO(savedProject, board);
+        ProjectDTO result = toProjectDTO(savedProject, board);
+        broadcastService.broadcastProjectUpdated(projectId, result);
+        return result;
     }
 
     @Transactional
@@ -178,6 +185,9 @@ public class ProjectService {
 
         project.setIsDeletionMarked(true);
         projectRepository.save(project);
+        
+        // Broadcast project deletion to all connected clients
+        broadcastService.broadcastProjectDeleted(projectId);
     }
 
     @Transactional
@@ -202,7 +212,12 @@ public class ProjectService {
             .build();
 
         card = cardRepository.save(card);
-        return toCardDTO(card);
+        CardDTO cardDTO = toCardDTO(card);
+        
+        // Broadcast the new card to all connected users viewing this board
+        broadcastService.broadcastCardCreated(stage.getBoard().getId(), stageId, cardDTO);
+        
+        return cardDTO;
     }
 
     @Transactional
@@ -223,7 +238,12 @@ public class ProjectService {
         card.setAssignee(resolveAssignee(card.getStage().getBoard().getProject(), assigneeId));
 
         card = cardRepository.save(card);
-        return toCardDTO(card);
+        CardDTO cardDTO = toCardDTO(card);
+        
+        // Broadcast the updated card to all connected users viewing this board
+        broadcastService.broadcastCardUpdated(card.getStage().getBoard().getId(), card.getStage().getId(), cardDTO);
+        
+        return cardDTO;
     }
 
     @Transactional
@@ -258,11 +278,18 @@ public class ProjectService {
             });
 
         // Set new stage and position
+        UUID boardId = card.getStage().getBoard().getId();
+        UUID oldStageId = oldStage.getId();
         card.setStage(targetStage);
         card.setPosition(targetStage.getCards().size());
 
         Card savedCard = cardRepository.save(card);
-        return toCardDTO(savedCard);
+        CardDTO cardDTO = toCardDTO(savedCard);
+        
+        // Broadcast the card move to all connected users viewing this board
+        broadcastService.broadcastCardMoved(boardId, oldStageId, targetStageId, cardDTO, card.getPosition());
+        
+        return cardDTO;
     }
 
     @Transactional
@@ -275,8 +302,13 @@ public class ProjectService {
 
         requireEditableProject(card.getStage().getBoard().getProject(), userId);
 
+        UUID boardId = card.getStage().getBoard().getId();
+        UUID stageId = card.getStage().getId();
         card.setIsDeletionMarked(true);
         cardRepository.save(card);
+        
+        // Broadcast the card deletion to all connected users viewing this board
+        broadcastService.broadcastCardDeleted(boardId, stageId, cardId);
     }
 
     @Transactional
@@ -300,7 +332,12 @@ public class ProjectService {
             .build();
 
         stage = stageRepository.save(stage);
-        return toStageDTO(stage);
+        StageDTO stageDTO = toStageDTO(stage);
+        
+        // Broadcast the new stage to all connected users viewing this board
+        broadcastService.broadcastStageCreated(boardId, stageDTO);
+        
+        return stageDTO;
     }
 
     @Transactional
@@ -313,8 +350,12 @@ public class ProjectService {
 
         requireEditableProject(stage.getBoard().getProject(), userId);
 
+        UUID boardId = stage.getBoard().getId();
         stage.setIsDeletionMarked(true);
         stageRepository.save(stage);
+        
+        // Broadcast the stage deletion to all connected users viewing this board
+        broadcastService.broadcastStageDeleted(boardId, stageId);
     }
 
     @Transactional
@@ -329,7 +370,12 @@ public class ProjectService {
 
         stage.setTitle(normalizeRequiredText(newTitle, "Stage title is required", STAGE_TITLE_MAX, "Stage title"));
         stage = stageRepository.save(stage);
-        return toStageDTO(stage);
+        StageDTO stageDTO = toStageDTO(stage);
+        
+        // Broadcast the stage update to all connected users viewing this board
+        broadcastService.broadcastStageUpdated(stage.getBoard().getId(), stageDTO);
+        
+        return stageDTO;
     }
 
     @Transactional
@@ -374,7 +420,12 @@ public class ProjectService {
 
         projectMemberRepository.upsertMemberRole(projectId, user.getId(), requestedRole.toDbValue());
 
-        return toTeamMemberDTO(user, requestedRole);
+        TeamMemberDTO result = toTeamMemberDTO(user, requestedRole);
+        
+        // Broadcast team member addition to all connected clients
+        broadcastService.broadcastTeamMemberAdded(projectId, result);
+        
+        return result;
     }
 
     @Transactional
@@ -403,7 +454,12 @@ public class ProjectService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
 
         projectMemberRepository.upsertMemberRole(projectId, targetUserId, requestedRole.toDbValue());
-        return toTeamMemberDTO(targetUser, requestedRole);
+        TeamMemberDTO result = toTeamMemberDTO(targetUser, requestedRole);
+        
+        // Broadcast team member role change to all connected clients
+        broadcastService.broadcastTeamMemberRoleChanged(projectId, targetUserId, role);
+        
+        return result;
     }
 
     @Transactional
@@ -424,6 +480,9 @@ public class ProjectService {
         }
 
         projectMemberRepository.deleteMember(projectId, targetUserId);
+
+        // Broadcast team member removal to all connected clients
+        broadcastService.broadcastTeamMemberRemoved(projectId, targetUserId);
     }
 
     private ProjectDTO toProjectDTO(Project project, Board board) {

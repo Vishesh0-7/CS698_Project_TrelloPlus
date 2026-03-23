@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { useProjectStore } from '../store/projectStore';
+import { useWebSocketBoardUpdates } from '../hooks/useWebSocketBoardUpdates';
 import { useChangeStore, type ChangeRequest } from '../store/changeStore';
 import { useMeetingStore, type Meeting } from '../store/meetingStore';
 import { KanbanBoard } from './KanbanBoard';
@@ -32,7 +33,6 @@ import { toast } from 'sonner';
 import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
 
 type Tab = 'board' | 'meetings' | 'decisions';
-const PROJECT_SYNC_INTERVAL_MS = 5000;
 
 export function ProjectView() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -194,79 +194,68 @@ export function ProjectView() {
     rollbackAvailable: false,
   });
 
-  const syncProjectData = useCallback(
-    async ({ showErrorToast = false }: { showErrorToast?: boolean } = {}) => {
-      if (!projectId) {
-        return;
-      }
-
-      try {
-        const [projectResponse, meetings, changes] = await Promise.all([
-          apiService.getProject(projectId),
-          apiService.getMeetingsByProject(projectId),
-          apiService.listChanges({ projectId }),
-        ]);
-
-        const mappedProject = mapProjectResponseToProject(projectResponse);
-        const existingProject = useProjectStore
-          .getState()
-          .projects.find((candidate) => candidate.id === projectId);
-
-        updateProject(projectId, {
-          name: mappedProject.name,
-          description: mappedProject.description,
-          boardId: mappedProject.boardId,
-          members: mappedProject.members,
-          columns: mappedProject.columns,
-          tasks: mappedProject.tasks,
-          decisions: existingProject?.decisions ?? [],
-        });
-
-        setProjectMeetings(meetings);
-        setMeetingsStore(meetings.map(mapMeetingToStore));
-        setChangesStore(changes.map(mapChangeToStore));
-      } catch (error) {
-        if (!showErrorToast) {
-          return;
-        }
-
-        toast.error(error instanceof Error ? error.message : 'Failed to load project data');
-      }
-    },
-    [projectId, setMeetingsStore, setChangesStore, updateProject],
-  );
-
   useEffect(() => {
     if (!projectId) {
       setProjectMeetings([]);
       return;
     }
 
-    let isCancelled = false;
+    let isMounted = true;
 
-    const syncIfActive = () => {
-      if (isCancelled || document.visibilityState !== 'visible') {
+    const loadProjectMeetings = async () => {
+      try {
+        const meetings = await apiService.getMeetingsByProject(projectId);
+        const changes = await apiService.listChanges({ projectId });
+        if (isMounted) {
+          setProjectMeetings(meetings);
+          setMeetingsStore(meetings.map(mapMeetingToStore));
+          setChangesStore(changes.map(mapChangeToStore));
+        }
+      } catch (error) {
+        if (isMounted) {
+          toast.error(error instanceof Error ? error.message : 'Failed to load project meetings');
+        }
+      }
+    };
+
+    void loadProjectMeetings();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [projectId]);
+
+  const refreshProjectMeetings = async () => {
+    if (!projectId) return;
+
+    const meetings = await apiService.getMeetingsByProject(projectId);
+    const changes = await apiService.listChanges({ projectId });
+    setProjectMeetings(meetings);
+    setMeetingsStore(meetings.map(mapMeetingToStore));
+    setChangesStore(changes.map(mapChangeToStore));
+  };
+
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+
+    const handleRealtimeRefresh = async (event: Event) => {
+      const customEvent = event as CustomEvent<{ projectId?: string }>;
+      if (customEvent.detail?.projectId !== projectId) {
         return;
       }
 
-      void syncProjectData();
+      try {
+        await refreshProjectMeetings();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to refresh realtime data');
+      }
     };
 
-    void syncProjectData({ showErrorToast: true });
-
-    const intervalId = window.setInterval(syncIfActive, PROJECT_SYNC_INTERVAL_MS);
-    document.addEventListener('visibilitychange', syncIfActive);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', syncIfActive);
-    };
-  }, [projectId, syncProjectData]);
-
-  const refreshProjectMeetings = async () => {
-    await syncProjectData({ showErrorToast: true });
-  };
+    window.addEventListener('project-realtime-refresh', handleRealtimeRefresh);
+    return () => window.removeEventListener('project-realtime-refresh', handleRealtimeRefresh);
+  }, [projectId, refreshProjectMeetings]);
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {
     setRescheduleMeeting(meeting);
@@ -401,6 +390,10 @@ export function ProjectView() {
       isMounted = false;
     };
   }, [projectId, project, setProjects]);
+
+  // Enable real-time board updates via WebSocket
+  const boardId = project?.boardId || null;
+  useWebSocketBoardUpdates(boardId, projectId);
 
   if (isLoadingProject) {
     return (

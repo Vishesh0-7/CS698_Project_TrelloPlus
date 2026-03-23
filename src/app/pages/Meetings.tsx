@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useChangeStore, type ChangeRequest } from '../store/changeStore';
 import { useMeetingStore, type Meeting } from '../store/meetingStore';
 import { useNavigate } from 'react-router';
@@ -27,8 +27,6 @@ import { Calendar, Clock, Plus, FileText, ListChecks, Video, ExternalLink } from
 import { apiService, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
 import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
-
-const MEETINGS_SYNC_INTERVAL_MS = 5000;
 
 const statusConfig = {
   'scheduled': { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -118,10 +116,8 @@ export function Meetings() {
     rollbackAvailable: false,
   });
 
-  const loadMeetings = useCallback(async ({ showLoadingState = false, showErrorToast = false }: { showLoadingState?: boolean; showErrorToast?: boolean } = {}) => {
-    if (showLoadingState) {
-      setIsLoading(true);
-    }
+  const loadMeetings = async () => {
+    setIsLoading(true);
 
     try {
       const projects = await apiService.getUserProjects();
@@ -149,15 +145,11 @@ export function Meetings() {
       setMeetingsStore(uniqueMeetings.map(mapMeetingToStore));
       setChangesStore(uniqueChanges.map(mapChangeToStore));
     } catch (error) {
-      if (showErrorToast) {
-        toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
-      }
+      toast.error(error instanceof Error ? error.message : 'Failed to load meetings');
     } finally {
-      if (showLoadingState) {
-        setIsLoading(false);
-      }
+      setIsLoading(false);
     }
-  }, [setMeetingsStore, setChangesStore]);
+  };
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {
     setRescheduleMeeting(meeting);
@@ -183,7 +175,7 @@ export function Meetings() {
       });
       toast.success('Meeting rescheduled');
       setRescheduleMeeting(null);
-      await loadMeetings({ showErrorToast: true });
+      await loadMeetings();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to reschedule meeting');
     } finally {
@@ -198,7 +190,7 @@ export function Meetings() {
       await apiService.deleteMeeting(removeMeeting.id);
       toast.success('Meeting removed');
       setRemoveMeeting(null);
-      await loadMeetings({ showErrorToast: true });
+      await loadMeetings();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to remove meeting');
     } finally {
@@ -207,27 +199,8 @@ export function Meetings() {
   };
 
   useEffect(() => {
-    let isCancelled = false;
-
-    void loadMeetings({ showLoadingState: true, showErrorToast: true });
-
-    const syncIfActive = () => {
-      if (isCancelled || document.visibilityState !== 'visible') {
-        return;
-      }
-
-      void loadMeetings();
-    };
-
-    const intervalId = window.setInterval(syncIfActive, MEETINGS_SYNC_INTERVAL_MS);
-    document.addEventListener('visibilitychange', syncIfActive);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', syncIfActive);
-    };
-  }, [loadMeetings]);
+    void loadMeetings();
+  }, []);
 
   const normalizeMeetingStatusLabel = (status: string) => {
     switch (status) {
@@ -282,14 +255,7 @@ export function Meetings() {
               <FileText className="w-8 h-8 text-blue-600" aria-hidden="true" />
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">No meetings yet</h3>
-            <p className="text-gray-600 mb-6">Get started by creating your first meeting</p>
-            <Button 
-              onClick={() => navigate('/create-meeting')}
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Create Meeting
-            </Button>
+            <p className="text-gray-600">Get started by creating your first meeting</p>
           </div>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">

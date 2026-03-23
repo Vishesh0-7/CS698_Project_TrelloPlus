@@ -25,6 +25,7 @@ public class ApprovalService {
     private final MeetingMemberRepository meetingMemberRepository;
     private final ActionItemRepository actionItemRepository;
     private final DecisionRepository decisionRepository;
+    private final BoardBroadcastService broadcastService;
 
     /**
      * Submit approval response for a meeting summary
@@ -71,19 +72,21 @@ public class ApprovalService {
 
         // Check if all members have responded
         checkAndUpdateApprovalStatus(meeting, approvalRequest);
+
+        // Broadcast latest approval status after each response
+        broadcastService.broadcastApprovalStatusChanged(
+            meeting.getProject().getId(),
+            meetingId,
+            meeting.getStatus().name()
+        );
     }
 
     /**
-     * Get approval status for a meeting - verifies user is meeting member
+     * Get approval status for a meeting
      */
     public ApprovalStatusDTO getApprovalStatus(UUID meetingId, UUID userId) {
-        Meeting meeting = meetingRepository.findById(meetingId)
+        meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a meeting member
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
 
         ApprovalRequestSummary approvalRequest = approvalRequestRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No approval request for this meeting"));
@@ -167,32 +170,19 @@ public class ApprovalService {
     }
 
     /**
-     * Check if a meeting has been fully approved - verifies user is meeting member
+     * Check if a meeting has been fully approved
      */
     public boolean isMeetingApproved(UUID meetingId, UUID userId) {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a meeting member
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
         
         return meeting.getStatus() == Meeting.MeetingStatus.APPROVED;
     }
 
     /**
-     * Check if all required approvals have been submitted - verifies user is meeting member
+     * Check if all required approvals have been submitted
      */
     public boolean hasAllApprovalsSubmitted(UUID meetingId, UUID userId) {
-        Meeting meeting = meetingRepository.findById(meetingId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
-
-        // Verify user is a meeting member
-        if (!meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not a member of this meeting");
-        }
-
         ApprovalRequestSummary approvalRequest = approvalRequestRepository.findByMeetingId(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No approval request for this meeting"));
 
@@ -224,6 +214,12 @@ public class ApprovalService {
 
         actionItem.setApprovalStatus(ActionItem.ApprovalStatus.APPROVED);
         actionItemRepository.save(actionItem);
+        broadcastService.broadcastActionItemApprovalChanged(
+            actionItem.getMeeting().getProject().getId(),
+            meetingId,
+            actionItemId,
+            ActionItem.ApprovalStatus.APPROVED.name()
+        );
     }
 
     /**
@@ -244,5 +240,11 @@ public class ApprovalService {
 
         decision.setApprovalStatus(Decision.ApprovalStatus.APPROVED);
         decisionRepository.save(decision);
+        broadcastService.broadcastDecisionApprovalChanged(
+            decision.getMeeting().getProject().getId(),
+            meetingId,
+            decisionId,
+            Decision.ApprovalStatus.APPROVED.name()
+        );
     }
 }
