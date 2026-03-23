@@ -29,6 +29,113 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  fullstack-smoke:
+    name: Fullstack Smoke (DB + Backend + Frontend)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: flowboard
+          POSTGRES_USER: flowboard
+          POSTGRES_PASSWORD: flowboard_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowboard -d flowboard"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/flowboard
+      DB_USERNAME: flowboard
+      DB_PASSWORD: flowboard_password
+      JWT_SECRET: ci-secret-key-with-at-least-32-characters
+      CORS_ALLOWED_ORIGINS: http://127.0.0.1:*
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Start backend
+        run: |
+          cd backend
+          mvn -B -ntp spring-boot:run -Dspring-boot.run.arguments='--server.port=8080 --spring.profiles.active=dev,concurrency-test' > ../backend.log 2>&1 &
+          echo $! > ../backend.pid
+
+      - name: Wait for backend
+        run: |
+          for i in {1..90}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/auth/login || true)
+            if [ "$code" != "000" ]; then
+              echo "Backend is up with status $code"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not start in time"
+          exit 1
+
+      - name: Start frontend
+        run: |
+          VITE_API_BASE_URL=http://127.0.0.1:8080/api/v1 npm run dev -- --host 127.0.0.1 --port 5173 > frontend.log 2>&1 &
+          echo $! > frontend.pid
+
+      - name: Wait for frontend
+        run: |
+          for i in {1..60}; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5173/login || true)
+            if [ "$code" = "200" ]; then
+              echo "Frontend is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend did not start in time"
+          exit 1
+
+      - name: Run frontend smoke script
+        run: |
+          BACKEND_BASE=http://127.0.0.1:8080/api/v1 \
+          FRONTEND_BASES=http://127.0.0.1:5173 \
+          USERS=3 \
+          DISTINCT_USERS=false \
+          DEEP_WORKFLOW=false \
+          node scripts/playwright_frontend_login_10.mjs
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullstack-logs
+          path: |
+            backend.log
+            frontend.log
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f backend.pid ]; then kill $(cat backend.pid) || true; fi
+          if [ -f frontend.pid ]; then kill $(cat frontend.pid) || true; fi
+
   backend:
     name: Backend Build and Test
     runs-on: ubuntu-latest

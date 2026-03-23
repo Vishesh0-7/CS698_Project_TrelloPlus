@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 bun.lockb
@@ -51,6 +50,8 @@ pids
 coverage/
 .nyc_output/
 .mocha_opts
+playwright-report/
+test-results/
 
 # Misc
 .cache/
