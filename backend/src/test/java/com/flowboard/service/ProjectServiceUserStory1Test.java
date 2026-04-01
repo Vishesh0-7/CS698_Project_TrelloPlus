@@ -57,6 +57,9 @@ class ProjectServiceUserStory1Test {
     @Mock
     private BoardGenerator boardGenerator;
 
+    @Mock
+    private BoardBroadcastService broadcastService;
+
     @InjectMocks
     private ProjectService projectService;
 

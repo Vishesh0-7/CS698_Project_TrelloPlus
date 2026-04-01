@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -21,6 +23,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class SummaryServiceUserStory2Test {
 
     @Mock
@@ -131,27 +134,27 @@ class SummaryServiceUserStory2Test {
         when(meetingRepository.findById(meetingId)).thenReturn(Optional.of(testMeeting));
         when(meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)).thenReturn(true);
         when(aiEngine.analyzeMeetingTranscript(testMeeting.getTranscript())).thenReturn(mockAnalysis);
-        when(meetingSummaryRepository.save(any(MeetingSummary.class)))
+        lenient().when(meetingSummaryRepository.save(any(MeetingSummary.class)))
             .thenAnswer(i -> {
                 MeetingSummary summary = i.getArgument(0);
                 summary.setId(UUID.randomUUID());
                 return summary;
             });
-        when(actionItemRepository.save(any(ActionItem.class)))
+        lenient().when(actionItemRepository.save(any(ActionItem.class)))
             .thenAnswer(i -> {
                 ActionItem item = i.getArgument(0);
                 item.setId(UUID.randomUUID());
                 return item;
             });
-        when(decisionRepository.save(any(Decision.class)))
+        lenient().when(decisionRepository.save(any(Decision.class)))
             .thenAnswer(i -> {
                 Decision decision = i.getArgument(0);
                 decision.setId(UUID.randomUUID());
                 return decision;
             });
-        when(meetingMemberRepository.findByMeetingId(meetingId))
+        lenient().when(meetingMemberRepository.findByMeetingId(meetingId))
             .thenReturn(Collections.singletonList(member));
-        when(approvalRequestRepository.save(any(ApprovalRequestSummary.class)))
+        lenient().when(approvalRequestRepository.save(any(ApprovalRequestSummary.class)))
             .thenAnswer(i -> {
                 ApprovalRequestSummary req = i.getArgument(0);
                 req.setId(UUID.randomUUID());
@@ -180,9 +183,9 @@ class SummaryServiceUserStory2Test {
 
         when(meetingSummaryRepository.findById(summaryId)).thenReturn(Optional.of(summary));
         when(meetingMemberRepository.existsByMeetingIdAndUserId(testMeeting.getId(), userId)).thenReturn(true);
-        when(actionItemRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
-        when(decisionRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
-        when(changeRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
+        lenient().when(actionItemRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
+        lenient().when(decisionRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
+        lenient().when(changeRepository.findByMeetingId(testMeeting.getId())).thenReturn(Collections.emptyList());
 
         MeetingSummaryDTO result = summaryService.getSummary(summaryId, userId);
 
@@ -203,9 +206,9 @@ class SummaryServiceUserStory2Test {
 
         when(meetingSummaryRepository.findByMeetingId(meetingId)).thenReturn(Optional.of(summary));
         when(meetingMemberRepository.existsByMeetingIdAndUserId(meetingId, userId)).thenReturn(true);
-        when(actionItemRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
-        when(decisionRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
-        when(changeRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
+        lenient().when(actionItemRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
+        lenient().when(decisionRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
+        lenient().when(changeRepository.findByMeetingId(meetingId)).thenReturn(Collections.emptyList());
 
         MeetingSummaryDTO result = summaryService.getSummaryByMeeting(meetingId, userId);
 

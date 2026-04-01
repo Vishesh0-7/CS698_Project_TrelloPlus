@@ -53,7 +53,8 @@ export function KanbanBoard() {
   const handleMoveTask = async (taskId: string, newColumnId: string) => {
     try {
       const moved = await apiService.moveCard(taskId, { target_stage_id: newColumnId });
-      moveTask(project.id, moved.id, moved.column_id);
+      const mappedTask = mapCardResponseToTask(moved);
+      moveTask(project.id, mappedTask.id, mappedTask.columnId);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to move task');
     }
@@ -85,13 +86,17 @@ export function KanbanBoard() {
   };
 
   const handleCreateTask = async (taskData: { title: string; description: string; priority: BoardTask['priority']; columnId: string; assigneeId?: string }) => {
-    const created = await apiService.createCard(taskData.columnId, {
-      title: taskData.title,
-      description: taskData.description,
-      priority: taskData.priority,
-      assignee_id: taskData.assigneeId ?? null,
-    });
-    addTask(project.id, mapCardResponseToTask(created));
+    try {
+      const created = await apiService.createCard(taskData.columnId, {
+        title: taskData.title,
+        description: taskData.description,
+        priority: taskData.priority,
+        assignee_id: taskData.assigneeId ?? null,
+      });
+      addTask(project.id, mapCardResponseToTask(created));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create task');
+    }
   };
 
   const handleAddColumn = async () => {
@@ -159,12 +164,18 @@ export function KanbanBoard() {
         await apiService.renameStage(editingColumnId, { title: editingColumnTitle.trim() });
         renameColumn(project.id, editingColumnId, editingColumnTitle.trim());
         toast.success('Column renamed');
+        // Only clear state on success
+        setEditingColumnId(null);
+        setEditingColumnTitle('');
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to rename column');
+        // Keep state on error so user can correct it
       }
+    } else {
+      // Clear state if no valid editing context
+      setEditingColumnId(null);
+      setEditingColumnTitle('');
     }
-    setEditingColumnId(null);
-    setEditingColumnTitle('');
   };
 
   const handleDeleteColumn = async (columnId: string) => {

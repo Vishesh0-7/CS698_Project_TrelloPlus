@@ -41,14 +41,14 @@ public class ChangeController {
         return ResponseEntity.ok(changePreviewService.listChanges(meetingId, projectId, status, userId));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<ChangeDTO> getChange(
-        @PathVariable UUID id,
-        @RequestHeader("Authorization") String authHeader
-    ) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        return ResponseEntity.ok(changePreviewService.getChange(id, userId));
-    }
+    // @GetMapping("/{id}")
+    // public ResponseEntity<ChangeDTO> getChange(
+    //     @PathVariable UUID id,
+    //     @RequestHeader("Authorization") String authHeader
+    // ) {
+    //     UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+    //     return ResponseEntity.ok(changePreviewService.getChange(id, userId));
+    // }
 
     @GetMapping("/{id}/diff")
     public ResponseEntity<ChangeDiffDTO> getDiff(
@@ -59,14 +59,14 @@ public class ChangeController {
         return ResponseEntity.ok(changePreviewService.getDiff(id, userId));
     }
 
-    @GetMapping("/{id}/impact")
-    public ResponseEntity<ChangeImpactDTO> getImpact(
-        @PathVariable UUID id,
-        @RequestHeader("Authorization") String authHeader
-    ) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        return ResponseEntity.ok(changePreviewService.getImpact(id, userId));
-    }
+    // @GetMapping("/{id}/impact")
+    // public ResponseEntity<ChangeImpactDTO> getImpact(
+    //     @PathVariable UUID id,
+    //     @RequestHeader("Authorization") String authHeader
+    // ) {
+    //     UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+    //     return ResponseEntity.ok(changePreviewService.getImpact(id, userId));
+    // }
 
     @PostMapping("/{id}/approve")
     public ResponseEntity<ApprovalStatusDTO> approve(
@@ -110,14 +110,14 @@ public class ChangeController {
         return ResponseEntity.ok(changeApplicationService.applyChange(id, actor));
     }
 
-    @GetMapping("/{id}/history")
-    public ResponseEntity<List<ChangeHistoryEntryDTO>> getHistory(
-        @PathVariable UUID id,
-        @RequestHeader("Authorization") String authHeader
-    ) {
-        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
-        return ResponseEntity.ok(changePreviewService.getHistory(id, userId));
-    }
+    // @GetMapping("/{id}/history")
+    // public ResponseEntity<List<ChangeHistoryEntryDTO>> getHistory(
+    //     @PathVariable UUID id,
+    //     @RequestHeader("Authorization") String authHeader
+    // ) {
+    //     UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+    //     return ResponseEntity.ok(changePreviewService.getHistory(id, userId));
+    // }
 
     private User getCurrentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
