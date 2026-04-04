@@ -25,6 +25,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -161,5 +162,35 @@ class ChangeControllerUserStory3ApiTest {
         mockMvc.perform(post("/changes/{id}/apply", changeId))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("APPLIED"));
+    }
+
+    @Test
+    void approve_withoutAuthentication_returnsUnauthorized() throws Exception {
+        ChangeDecisionRequest request = ChangeDecisionRequest.builder()
+            .decision("APPROVE")
+            .build();
+
+        mockMvc.perform(post("/changes/{id}/approve", changeId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "reviewer@example.com")
+    void submitDecision_withInvalidDecision_returnsBadRequest() throws Exception {
+        ChangeDecisionRequest request = ChangeDecisionRequest.builder()
+            .decision("NOT_A_VALID_DECISION")
+            .build();
+
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.BAD_REQUEST,
+            "Invalid decision"
+        )).when(changeApprovalService).decide(eq(changeId), any(User.class), any(ChangeDecisionRequest.class));
+
+        mockMvc.perform(post("/changes/{id}/decision", changeId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isBadRequest());
     }
 }
