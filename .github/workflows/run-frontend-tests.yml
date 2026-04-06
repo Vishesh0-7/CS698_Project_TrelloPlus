@@ -1,0 +1,97 @@
+name: Run Frontend Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - test_specifications
+  pull_request:
+
+jobs:
+  frontend-tests:
+    name: Frontend Tests + Targeted Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend tests with targeted coverage
+        run: >-
+          npm run test --
+          src/MeetingSummary.test.tsx
+          src/app/pages/MeetingChanges.test.tsx
+          src/app/pages/__tests__/KanbanBoard.test.tsx
+          --coverage
+          --coverageReporters=text
+          --coverageReporters=lcov
+          --coverageReporters=json-summary
+          --collectCoverageFrom=src/app/pages/KanbanBoard.tsx
+          --collectCoverageFrom=src/app/pages/MeetingSummary.tsx
+          --collectCoverageFrom=src/app/pages/MeetingChanges.tsx
+
+      - name: Publish targeted coverage summary
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const summaryPath = 'coverage/coverage-summary.json';
+          if (!fs.existsSync(summaryPath)) {
+            throw new Error('coverage-summary.json not found');
+          }
+
+          const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+          const targets = [
+            'src/app/pages/KanbanBoard.tsx',
+            'src/app/pages/MeetingSummary.tsx',
+            'src/app/pages/MeetingChanges.tsx',
+          ];
+
+          const findEntry = (target) => {
+            const direct = summary[target];
+            if (direct) return direct;
+            const key = Object.keys(summary).find((k) =>
+              k.replace(/\\/g, '/').endsWith(target)
+            );
+            return key ? summary[key] : null;
+          };
+
+          const rows = targets.map((target) => {
+            const entry = findEntry(target);
+            if (!entry) {
+              return `| ${target} | N/A | N/A | N/A | N/A |`;
+            }
+            return `| ${target} | ${entry.lines.pct}% | ${entry.functions.pct}% | ${entry.statements.pct}% | ${entry.branches.pct}% |`;
+          });
+
+          const md = [
+            '## Frontend Targeted Coverage',
+            '',
+            '| File | Lines | Functions | Statements | Branches |',
+            '|---|---:|---:|---:|---:|',
+            ...rows,
+            '',
+          ].join('\n');
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+          NODE
+
+      - name: Upload frontend coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-targeted-coverage
+          path: |
+            coverage/lcov.info
+            coverage/coverage-summary.json
+            coverage/lcov-report/

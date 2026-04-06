@@ -1,0 +1,65 @@
+name: Run Backend Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - test_specifications
+  pull_request:
+
+jobs:
+  backend-tests:
+    name: Backend Tests + Targeted Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run targeted backend tests with JaCoCo report
+        working-directory: backend
+        run: mvn -B -ntp -Dtest=ProjectServiceTest,SummaryServiceTest,SummaryServiceUserStory2Test,ChangeApplicationServiceUserStory3Test test jacoco:report
+
+      - name: Publish targeted backend coverage summary
+        working-directory: backend
+        run: |
+          if [ ! -f target/site/jacoco/jacoco.csv ]; then
+            echo "jacoco.csv not found" >&2
+            exit 1
+          fi
+
+          awk -F',' '
+            BEGIN {
+              print "## Backend Targeted Coverage"
+              print ""
+              print "| Class | Line Coverage |"
+              print "|---|---:|"
+            }
+            $2=="com.flowboard.service" && ($3=="ProjectService" || $3=="SummaryService" || $3=="ChangeApplicationService") {
+              missed=$8+0
+              covered=$9+0
+              total=missed+covered
+              pct=(total>0)?(covered*100/total):0
+              printf("| %s.java | %.2f%% |\n", $3, pct)
+            }
+          ' target/site/jacoco/jacoco.csv >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload backend coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-targeted-coverage
+          path: |
+            backend/target/site/jacoco/jacoco.csv
+            backend/target/site/jacoco/jacoco.xml
+            backend/target/site/jacoco/index.html
+            backend/target/site/jacoco/
