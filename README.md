@@ -177,6 +177,127 @@ npm run dev        # Start development server
 npm run build      # Build for production
 ```
 
+## Testing on Local Machine
+
+This section covers everything needed to run tests manually on a developer machine for both frontend and backend, including required frameworks/libraries and coverage commands.
+
+### Frontend Testing
+
+#### Prerequisites
+- Node.js 18+ (Node 20 LTS recommended)
+- npm (bundled with Node.js)
+
+#### Frameworks and Libraries (installed by npm)
+Run `npm install` in the repository root to install all frontend dependencies from `package.json`, including:
+- React + React DOM
+- TypeScript + Vite
+- Jest + ts-jest + jest-environment-jsdom
+- Testing Library (`@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`)
+- UI/runtime libraries (Tailwind, Radix UI, React Router, React DnD, Zustand, etc.)
+
+#### Install and run tests
+From repository root:
+
+```bash
+npm install
+npm run test
+```
+
+Useful commands:
+
+```bash
+npm run test:watch      # watch mode
+npm run test:coverage   # full frontend coverage
+```
+
+#### Frontend targeted coverage (US files only)
+Target files:
+- US1: `src/app/pages/KanbanBoard.tsx`
+- US2: `src/app/pages/MeetingSummary.tsx`
+- US3: `src/app/pages/MeetingChanges.tsx`
+
+Run from repository root:
+
+```bash
+npm run test -- src/MeetingSummary.test.tsx src/app/pages/MeetingChanges.test.tsx src/app/pages/__tests__/KanbanBoard.test.tsx --coverage --collectCoverageFrom="src/app/pages/KanbanBoard.tsx" --collectCoverageFrom="src/app/pages/MeetingSummary.tsx" --collectCoverageFrom="src/app/pages/MeetingChanges.tsx"
+```
+
+### Backend Testing
+
+#### Prerequisites
+- Java 21 JDK
+- Maven 3.8+
+- PostgreSQL 16+ (or Docker for local database)
+
+#### Frameworks and Libraries (resolved by Maven)
+Run Maven once to resolve all backend dependencies defined in `backend/pom.xml`, including:
+- Spring Boot (Web, Data JPA, Security, Validation, WebSocket)
+- Flyway
+- PostgreSQL JDBC driver
+- JWT libraries (`jjwt`)
+- Jackson
+- Lombok
+- Spring Boot Test + Spring Security Test
+- JaCoCo Maven plugin (coverage)
+
+#### Install dependencies and run tests
+From `backend` folder:
+
+```bash
+mvn clean install -DskipTests
+mvn test
+```
+
+Run backend tests with coverage:
+
+```bash
+mvn clean test jacoco:report
+```
+
+Open JaCoCo HTML report:
+
+```bash
+start target/site/jacoco/index.html
+```
+
+Coverage artifacts:
+- HTML report: `backend/target/site/jacoco/index.html`
+- CSV report: `backend/target/site/jacoco/jacoco.csv`
+- Test reports: `backend/target/surefire-reports`
+
+#### Backend targeted coverage (U files only)
+Target files:
+- U1: `backend/src/main/java/com/flowboard/service/ProjectService.java`
+- U2: `backend/src/main/java/com/flowboard/service/SummaryService.java`
+- U3: `backend/src/main/java/com/flowboard/service/ChangeApplicationService.java`
+
+Run from backend folder:
+
+```bash
+mvn -Dtest=ProjectServiceTest,SummaryServiceTest,SummaryServiceUserStory2Test,ChangeApplicationServiceUserStory3Test test jacoco:report
+```
+
+Print coverage for only those 3 backend files (PowerShell):
+
+```powershell
+$csv = Import-Csv "target/site/jacoco/jacoco.csv"
+$targets = @("ProjectService", "SummaryService", "ChangeApplicationService")
+$csv |
+  Where-Object { $_.PACKAGE -eq "com.flowboard.service" -and $targets -contains $_.CLASS } |
+  ForEach-Object {
+    $miss = [double]$_.LINE_MISSED
+    $cov = [double]$_.LINE_COVERED
+    $pct = if (($miss + $cov) -gt 0) { [math]::Round((100 * $cov / ($miss + $cov)), 2) } else { 0 }
+    [PSCustomObject]@{ Class = $_.CLASS; LineCoveragePct = $pct }
+  } |
+  Format-Table -AutoSize
+```
+
+Current backend results for these files:
+- U1 ProjectService.java: 98.05%
+- U2 SummaryService.java: 97.75%
+- U3 ChangeApplicationService.java: 96.77%
+
 ## 🤝 Contributing
 
 This is a CS698 course project. For questions or contributions, please contact the development team.
