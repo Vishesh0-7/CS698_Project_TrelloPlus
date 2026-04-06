@@ -55,7 +55,7 @@ public class SummaryService {
         Meeting meeting = meetingRepository.findById(meetingId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found"));
 
-        if (meeting.getTranscript() == null || meeting.getTranscript().isEmpty()) {
+        if (meeting.getTranscript() == null || meeting.getTranscript().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting has no transcript");
         }
 
@@ -202,7 +202,6 @@ public class SummaryService {
 
     public MeetingSummaryDTO addActionItem(UUID meetingId, String description, String sourceContext, String priority, User actor) {
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
-        assertSummaryNotApprovedYet(meetingId);
         boolean autoApprove = hasUserApprovedSummary(meetingId, actor.getId());
 
         ActionItem.Priority parsedPriority = ActionItem.Priority.MEDIUM;
@@ -277,7 +276,6 @@ public class SummaryService {
 
     public MeetingSummaryDTO addDecision(UUID meetingId, String description, String sourceContext, String impactSummary, User actor) {
         Meeting meeting = getEditableMeetingForMember(meetingId, actor);
-        assertSummaryNotApprovedYet(meetingId);
         boolean autoApprove = hasUserApprovedSummary(meetingId, actor.getId());
 
         Decision decision = Decision.builder()
