@@ -1,359 +1,569 @@
-# Test Specification: MeetingSummary.tsx
+# MeetingSummary.tsx Test Specification Document
 
-**File**: `src/app/pages/MeetingSummary.tsx`  
-**Target Coverage**: 80%+  
-**Test Type**: Frontend Unit Tests with Complete Backend Isolation
+## Current Implementation Overview
 
----
+**File**: `src/app/pages/MeetingSummary.tsx`
 
-## Executive Summary
+**Architecture**: REST API-driven React component using local component state (not Zustand stores). The component makes direct API calls via `apiService` and manages form state with `useState` hooks.
 
-MeetingSummary.tsx displays meeting summaries with decisions, action items, and approval workflows. It handles complex authorization logic (owner-only actions), multi-user approval flows, item editing/deletion, and approval status tracking. The component requires extensive mocking of API services and local storage for user context.
-
----
-
-## Identified Functions and Execution Paths
-
-| # | Function Name | Type | Parameters | Return Type | Key Dependencies |
-|---|---|---|---|---|---|
-| 1 | `reloadSummaryAndApproval` | Async Utility | `id: string` | `Promise<void>` | `apiService.getSummaryByMeeting`, `apiService.getApprovalStatus` |
-| 2 | `useEffect` (data load) | Lifecycle | Dependency: `[meetingId]` | `void` | `localStorage`, `apiService` (multiple), `getProjectMembers` |
-| 3 | `submitDecision` | Async Handler | `decision: 'APPROVED' \| 'REJECTED'` | `Promise<void>` | `apiService.submitSummaryApproval`, `getMeeting`, `getApprovalStatus`, `getSummaryByMeeting` |
-| 4 | `approveItem` | Async Handler | `itemId: string`, `itemType: 'action' \| 'decision'` | `Promise<void>` | `apiService.approveActionItem` or `approveDecisionItem` |
-| 5 | `resetActionEditor` | Sync Reset | `void` | `void` | State mutations only |
-| 6 | `resetDecisionEditor` | Sync Reset | `void` | `void` | State mutations only |
-| 7 | `saveActionItem` | Async Handler | `void` | `Promise<void>` | `apiService.addActionItem` or `updateActionItem` |
-| 8 | `removeActionItem` | Async Handler | `itemId: string` | `Promise<void>` | `apiService.deleteActionItem` |
-| 9 | `saveDecisionItem` | Async Handler | `void` | `Promise<void>` | `apiService.addDecision` or `updateDecision` |
-| 10 | `removeDecisionItem` | Async Handler | `itemId: string` | `Promise<void>` | `apiService.deleteDecision` |
-| 11 | `changeRequests` (useMemo) | Computed State | None | `ChangeRequest[]` | JSON parsing of `beforeState`/`afterState` |
-| 12 | Authorization Logic | Derived | None | `boolean` | `currentUserApproval`, `isProjectOwner`, `isMeetingFinalized` |
-| 13 | Conditional Button States | Derived | None | Disabled flags | Multiple state-derived conditions |
-| 14 | Main Component Render | Render | None | JSX | All above + conditional rendering |
+**Note on Stores**: While `useMeetingStore` and `useChangeStore` exist in the codebase, the current `MeetingSummary.tsx` implementation does **NOT** use them. It uses:
+- Local `useState` for all component state
+- Direct `apiService` calls for all data operations
+- `localStorage` for user authentication info
 
 ---
 
-## Mock Configuration Requirements
+## User Story Context
 
-### Mock API Service (`apiService`)
-
-```typescript
-const mockApiService = {
-  getMeeting: jest.fn(),  // Returns MeetingResponse
-  getSummaryByMeeting: jest.fn(),  // Returns MeetingSummaryResponse
-  getApprovalStatus: jest.fn(),  // Returns ApprovalStatusResponse
-  getProjectMembers: jest.fn(),  // Returns array of project members
-  submitSummaryApproval: jest.fn(),  // Called with (meetingId, decision, comments?)
-  approveActionItem: jest.fn(),  // Called with (itemId)
-  approveDecisionItem: jest.fn(),  // Called with (itemId)
-  addActionItem: jest.fn(),  // Called with (meetingId, {description, sourceContext?, priority})
-  updateActionItem: jest.fn(),  // Called with (actionId, {description, sourceContext?, priority})
-  deleteActionItem: jest.fn(),  // Called with (itemId)
-  addDecision: jest.fn(),  // Called with (meetingId, {description, sourceContext?, impactSummary?})
-  updateDecision: jest.fn(),  // Called with (decisionId, {description, sourceContext?, impactSummary?})
-  deleteDecision: jest.fn(),  // Called with (itemId)
-};
-```
-
-### Mock Router (`useParams`, `useNavigate`)
-
-```typescript
-const mockParams = { meetingId: 'meeting-1' };
-const mockNavigate = jest.fn();
-```
-
-### Mock Local Storage
-
-```typescript
-// Mock localStorage for user context
-const mockUser = { id: 'user-1', email: 'owner@test.com', name: 'Owner' };
-localStorage.setItem('user', JSON.stringify(mockUser));
-```
-
-### Mock Toast Notifications (`sonner`)
-
-```typescript
-const mockToast = {
-  error: jest.fn(),
-  success: jest.fn(),
-};
-```
+**User Story**: As a meeting facilitator, I want to end the meeting by generating an automatic summary of all agreed-upon action items, decisions, and changes in a separate approval checklist section, so that team members can review exactly what was decided and approve it before any changes take effect.
 
 ---
 
-## Mock Data Fixtures
+## State Management
 
-### Sample Meeting Response
+### Local State (useState)
+
+| State Variable | Type | Purpose |
+|---------------|------|---------|
+| `meeting` | `MeetingResponse \| null` | Meeting details from API |
+| `summary` | `MeetingSummaryResponse \| null` | AI summary with action items, decisions, changes |
+| `approval` | `ApprovalStatusResponse \| null` | Approval status and responses |
+| `selectedChange` | `ChangeRequest \| null` | Currently selected change for modal |
+| `comments` | `string` | User's approval comments input |
+| `isSubmitting` | `boolean` | Loading state for summary approval |
+| `approvingItemId` | `string \| null` | Loading state for individual item approval |
+| `editingActionId` | `string \| null` | ID of action item being edited (null = creating new) |
+| `editingDecisionId` | `string \| null` | ID of decision being edited (null = creating new) |
+| `showActionEditor` | `boolean` | Toggle action item form visibility |
+| `showDecisionEditor` | `boolean` | Toggle decision form visibility |
+| `actionDescription` | `string` | Action item description input |
+| `actionSourceContext` | `string` | Action item source context input |
+| `actionPriority` | `string` | Action item priority ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL') |
+| `decisionDescription` | `string` | Decision description input |
+| `decisionSourceContext` | `string` | Decision source context input |
+| `decisionImpactSummary` | `string` | Decision impact summary input |
+| `isSavingItem` | `boolean` | Loading state for save/delete operations |
+| `currentUserId` | `string \| null` | Current user ID from localStorage |
+| `isProjectOwner` | `boolean` | Whether current user is project owner |
+
+### Computed Properties (Derived State)
+
+| Property | Calculation | Purpose |
+|----------|-------------|---------|
+| `currentUserApproval` | `(approval?.responses \|\| []).find(r => r.userId === currentUserId && r.response !== 'PENDING')` | Find user's existing vote |
+| `hasSubmittedSummaryDecision` | `Boolean(currentUserApproval)` | Has user already voted |
+| `hasAnyApprovedSummaryDecision` | `(approval?.currentApprovedCount \|\| 0) > 0` | Any approvals exist |
+| `isMeetingFinalized` | `meeting.status === 'APPROVED' \|\| meeting.status === 'REJECTED'` | Meeting is locked |
+| `isItemEditingDisabled` | `isMeetingFinalized \|\| hasSubmittedSummaryDecision` | Editing blocked |
+| `canEditOrDeleteItems` | `isProjectOwner && !isItemEditingDisabled` | Can modify items |
+| `isAddDisabled` | `isItemEditingDisabled \|\| hasAnyApprovedSummaryDecision` | Adding blocked |
+
+---
+
+## Functions Analysis
+
+### 1. `reloadSummaryAndApproval(id: string)`
+
+**Location**: Lines 62-69
+
+**Purpose**: Refreshes summary and approval data after mutations.
+
+**API Calls**:
+- `apiService.getSummaryByMeeting(id)` - GET /api/v1/summaries/meeting/{meetingId}
+- `apiService.getApprovalStatus(id)` - GET /api/v1/approvals/summary/{meetingId}
+
+**State Updates**:
+- `setSummary(summaryData)`
+- `setApproval(approvalData)`
+
+**Example Scenario**:
+- Sarah reviews a meeting summary. Another team member approves an action item.
+- Sarah's UI refreshes, calling `reloadSummaryAndApproval`.
+- Expected: Updated approval status visible.
+
+---
+
+### 2. `useEffect` - Initial Data Loading
+
+**Location**: Lines 71-127
+
+**Purpose**: Loads all meeting data on mount, determines user permissions.
+
+**Flow**:
+1. Read `user` from `localStorage`, parse to get `currentUserId`
+2. If `meetingId` exists, fetch meeting, summary, and approval data in parallel
+3. If user and project exist, fetch project members and determine ownership
+4. Set component state (guarded by `isMounted` flag)
+
+**API Calls**:
+- `apiService.getMeeting(meetingId)`
+- `apiService.getSummaryByMeeting(meetingId)`
+- `apiService.getApprovalStatus(meetingId)`
+- `apiService.getProjectMembers(projectId)` (conditional)
+
+**Branch Logic**:
+| Branch | Condition | Test Input |
+|--------|-----------|------------|
+| localStorage empty | `!storedUser` | `localStorage.getItem('user')` returns null |
+| Invalid JSON | `JSON.parse()` throws | `localStorage.getItem('user')` returns `{invalid` |
+| Missing meetingId | `!meetingId` | `useParams()` returns `{}` |
+| Missing projectId | `!meetingData.projectId` | Meeting without project association |
+| Member fetch fails | `getProjectMembers()` throws | API returns 403/404 |
+| Component unmounted | `!isMounted` | Unmount during API call |
+| Error with Error instance | `error instanceof Error` | `new Error('message')` |
+| Error without instance | `!(error instanceof Error)` | String or object rejection |
+
+**Permission Logic**:
+- Checks `member.id` OR `member.userId` (handles both field names)
+- Only string IDs considered (`typeof memberId === 'string'`)
+- Role comparison is case-insensitive (`toLowerCase() === 'owner'`)
+
+---
+
+### 3. `changeRequests` (useMemo)
+
+**Location**: Lines 129-168
+
+**Purpose**: Transforms API change data into `ChangeRequest` format for modal.
+
+**Input**: `summary?.changes`, `meeting`
+
+**Transformation**:
+- Parses `beforeState` JSON (with try/catch fallback to undefined)
+- Parses `afterState` JSON (with try/catch fallback to undefined)
+- Maps API fields to `ChangeRequest` structure
+- Sets defaults for `affectedCards`, `affectedStages`, etc.
+
+**Branch Logic**:
+| Branch | Condition | Result |
+|--------|-----------|--------|
+| Missing data | `!summary \|\| !meeting` | Returns `[]` |
+| Valid beforeState | `c.beforeState` exists and parses | `before = parsedObject` |
+| Invalid beforeState | `JSON.parse()` throws | `before = undefined` |
+| Valid afterState | `c.afterState` exists and parses | `after = parsedObject` |
+| Invalid afterState | `JSON.parse()` throws | `after = undefined` |
+
+---
+
+### 4. `submitDecision(decision: 'APPROVED' | 'REJECTED')`
+
+**Location**: Lines 181-202
+
+**Purpose**: Submits user's final approval/rejection on the entire summary.
+
+**Flow**:
+1. Validate `meetingId` exists (early return if not)
+2. Set `isSubmitting(true)`
+3. Call `apiService.submitSummaryApproval()`
+4. Show success toast (message depends on decision type)
+5. Refresh meeting, approval, and summary data
+6. Set `isSubmitting(false)` in finally block
+
+**API Calls**:
+- `apiService.submitSummaryApproval(meetingId, decision, comments \|\| undefined)`
+- `apiService.getMeeting(meetingId)`
+- `apiService.getApprovalStatus(meetingId)`
+- `apiService.getSummaryByMeeting(meetingId)`
+
+**Branch Logic**:
+| Branch | Condition | Result |
+|--------|-----------|--------|
+| No meetingId | `!meetingId` | Early return, no changes |
+| APPROVED | `decision === 'APPROVED'` | Toast: "Summary approved" |
+| REJECTED | `decision === 'REJECTED'` | Toast: "Changes requested" |
+| With comments | `comments` truthy | Sends comments to API |
+| Without comments | `comments` falsy | Sends `undefined` to API |
+| API Error | Any API rejects | Error toast, state unchanged |
+| Error instance | `error instanceof Error` | Shows `error.message` |
+| Non-Error | `!(error instanceof Error)` | Shows fallback message |
+
+---
+
+### 5. `approveItem(itemId: string, itemType: 'action' | 'decision')`
+
+**Location**: Lines 204-222
+
+**Purpose**: Approves an individual action item or decision.
+
+**Flow**:
+1. Validate `meetingId` exists
+2. Set `approvingItemId(itemId)` to show loading state
+3. Call appropriate API based on `itemType`
+4. Reload summary and approval data
+5. Show success toast
+6. Clear `approvingItemId` in finally block
+
+**API Calls**:
+- `apiService.approveActionItem(itemId)` - POST /approvals/items/action-items/{itemId}/approve
+- `apiService.approveDecisionItem(itemId)` - POST /approvals/items/decisions/{itemId}/approve
+
+**Branch Logic**:
+| Branch | Condition | API Called |
+|--------|-----------|------------|
+| No meetingId | `!meetingId` | Early return |
+| Action item | `itemType === 'action'` | `approveActionItem()` |
+| Decision | `itemType === 'decision'` | `approveDecisionItem()` |
+| Success | API resolves | Reload data, success toast |
+| Error | API rejects | Error toast |
+
+---
+
+### 6. `resetActionEditor()`
+
+**Location**: Lines 224-230
+
+**Purpose**: Resets action item form to initial state.
+
+**State Changes**:
+- `setEditingActionId(null)`
+- `setShowActionEditor(false)`
+- `setActionDescription('')`
+- `setActionSourceContext('')`
+- `setActionPriority('MEDIUM')`
+
+---
+
+### 7. `resetDecisionEditor()`
+
+**Location**: Lines 232-238
+
+**Purpose**: Resets decision form to initial state.
+
+**State Changes**:
+- `setEditingDecisionId(null)`
+- `setShowDecisionEditor(false)`
+- `setDecisionDescription('')`
+- `setDecisionSourceContext('')`
+- `setDecisionImpactSummary('')`
+
+---
+
+### 8. `saveActionItem()`
+
+**Location**: Lines 240-264
+
+**Purpose**: Creates new or updates existing action item.
+
+**Flow**:
+1. Validate `meetingId` and `actionDescription.trim()` (early return if invalid)
+2. Set `isSavingItem(true)`
+3. If `editingActionId` exists: call `updateActionItem`
+4. Else: call `addActionItem`
+5. Update summary state, reset editor, show success toast
+6. Set `isSavingItem(false)` in finally
+
+**API Calls**:
+- `apiService.updateActionItem(editingActionId, payload)` - PUT
+- `apiService.addActionItem(meetingId, payload)` - POST
+
+**Payload**:
+```typescript
+{
+  description: actionDescription.trim(),
+  sourceContext: actionSourceContext.trim() || undefined,
+  priority: actionPriority,
+}
+```
+
+**Branch Logic**:
+| Branch | Condition | Result |
+|--------|-----------|--------|
+| Invalid inputs | `!meetingId \|\| !actionDescription.trim()` | Early return |
+| Update mode | `editingActionId` truthy | Calls `updateActionItem` |
+| Create mode | `editingActionId` falsy | Calls `addActionItem` |
+| Empty sourceContext | `actionSourceContext.trim()` falsy | Sends `undefined` |
+| With sourceContext | `actionSourceContext.trim()` truthy | Sends trimmed value |
+| Update success | API resolves | Toast: "Action item updated" |
+| Create success | API resolves | Toast: "Action item added" |
+
+---
+
+### 9. `removeActionItem(itemId: string)`
+
+**Location**: Lines 266-277
+
+**Purpose**: Deletes an action item.
+
+**API Call**: `apiService.deleteActionItem(itemId)` - DELETE
+
+**Flow**: Set loading, call API, update summary, show "Action item removed" toast, clear loading.
+
+---
+
+### 10. `saveDecisionItem()`
+
+**Location**: Lines 279-303
+
+**Purpose**: Creates new or updates existing decision.
+
+**Nearly identical to `saveActionItem`** with these differences:
+- Uses `decisionDescription`, `editingDecisionId`
+- Third field is `impactSummary` instead of `priority`
+- API calls: `updateDecision`, `addDecision`
+- Toast messages: "Decision updated", "Decision added"
+
+---
+
+### 11. `removeDecisionItem(itemId: string)`
+
+**Location**: Lines 305-316
+
+**Purpose**: Deletes a decision.
+
+**API Call**: `apiService.deleteDecision(itemId)` - DELETE
+
+**Toast**: "Decision removed"
+
+---
+
+## UI Rendering Logic
+
+### Permission-Based Rendering
+
+| UI Element | Condition | Notes |
+|------------|-----------|-------|
+| Add Decision button | `disabled={isAddDisabled}` | Hidden when approval started |
+| Add Action Item button | `disabled={isAddDisabled}` | Hidden when approval started |
+| Decision Approve button | `disabled={alreadyApproved \|\| approvingItemId === d.id \|\| hasSubmittedSummaryDecision}` | Per-item approval |
+| Action Approve button | `disabled={alreadyApproved \|\| approvingItemId === a.id \|\| hasSubmittedSummaryDecision}` | Per-item approval |
+| Decision Edit button | `disabled={!canEditOrDeleteItems}` | Owner only, before approval |
+| Decision Delete button | `disabled={!canEditOrDeleteItems \|\| isSavingItem}` | Owner only, before approval |
+| Action Edit button | `disabled={!canEditOrDeleteItems}` | Owner only, before approval |
+| Action Delete button | `disabled={!canEditOrDeleteItems \|\| isSavingItem}` | Owner only, before approval |
+| Comments textarea | `disabled={hasSubmittedSummaryDecision}` | Can't edit after voting |
+| Approve Summary button | `disabled={isSubmitting \|\| hasSubmittedSummaryDecision}` | One vote per user |
+| Request Changes button | `disabled={isSubmitting \|\| hasSubmittedSummaryDecision}` | One vote per user |
+
+---
+
+## Network Dependencies (API Endpoints)
+
+| Endpoint | Method | Used By |
+|----------|--------|---------|
+| /api/v1/meetings/{meetingId} | GET | useEffect |
+| /api/v1/summaries/meeting/{meetingId} | GET | useEffect, reloadSummaryAndApproval, submitDecision |
+| /api/v1/approvals/summary/{meetingId} | GET | useEffect, reloadSummaryAndApproval, submitDecision |
+| /api/v1/projects/{projectId}/members | GET | useEffect |
+| /api/v1/approvals/summary/{meetingId} | POST | submitDecision |
+| /api/v1/approvals/items/action-items/{itemId}/approve | POST | approveItem |
+| /api/v1/approvals/items/decisions/{itemId}/approve | POST | approveItem |
+| /api/v1/summaries/meeting/{meetingId}/action-items | POST | saveActionItem |
+| /api/v1/summaries/action-items/{itemId} | PUT | saveActionItem |
+| /api/v1/summaries/action-items/{itemId} | DELETE | removeActionItem |
+| /api/v1/summaries/meeting/{meetingId}/decisions | POST | saveDecisionItem |
+| /api/v1/summaries/decisions/{itemId} | PUT | saveDecisionItem |
+| /api/v1/summaries/decisions/{itemId} | DELETE | removeDecisionItem |
+
+---
+
+## Mock Objects for Testing
+
+### Mock Data
 
 ```typescript
+// Meeting Response
 const mockMeeting: MeetingResponse = {
   id: 'meeting-1',
-  title: 'Q1 Planning',
-  meetingDate: '2025-03-20',
-  meetingTime: '14:00',
-  status: 'SCHEDULED',
-  projectId: 'proj-1',
-  projectName: 'E-Commerce',
-};
-```
-
-### Sample Summary Response
-
-```typescript
-const mockSummary: MeetingSummaryResponse = {
-  decisions: [
-    {
-      id: 'dec-1',
-      description: 'Use React 19 for frontend',
-      sourceContext: 'Tech stack discussion',
-      approvalStatus: 'PENDING',
-    },
+  projectId: 'project-1',
+  projectName: 'Test Project',
+  title: 'Sprint Planning',
+  description: 'Weekly planning',
+  meetingDate: '2026-04-01',
+  meetingTime: '10:00',
+  platform: 'Zoom',
+  meetingLink: 'https://zoom.us/j/123',
+  status: 'PENDING_APPROVAL', // or 'SCHEDULED', 'IN_PROGRESS', 'APPROVED', 'REJECTED'
+  createdByName: 'John Doe',
+  createdAt: '2026-04-01T09:00:00Z',
+  members: [
+    { id: 'user-1', username: 'johndoe', email: 'john@test.com' },
+    { id: 'user-2', username: 'janesmith', email: 'jane@test.com' },
   ],
+};
+
+// Summary Response
+const mockSummary: MeetingSummaryResponse = {
+  id: 'summary-1',
+  meetingId: 'meeting-1',
+  status: 'PENDING',
+  aiGeneratedContent: 'AI summary text...',
+  generatedAt: '2026-04-01T11:00:00Z',
   actionItems: [
     {
-      id: 'act-1',
-      description: 'Setup CI/CD pipeline',
-      sourceContext: 'DevOps discussion',
-      priority: 'HIGH',
+      id: 'action-1',
+      description: 'Update docs',
+      sourceContext: 'Discussed at 10:30',
       approvalStatus: 'PENDING',
+      status: 'PENDING',
+      createdAt: '2026-04-01T11:00:00Z',
+    },
+  ],
+  decisions: [
+    {
+      id: 'decision-1',
+      description: 'Use PostgreSQL',
+      sourceContext: 'Architecture',
+      approvalStatus: 'PENDING',
+      status: 'PENDING',
+      createdAt: '2026-04-01T11:00:00Z',
     },
   ],
   changes: [
     {
       id: 'change-1',
-      changeType: 'CREATE_CARD',
+      meetingId: 'meeting-1',
+      changeType: 'WORKFLOW',
+      beforeState: '{"columns":3}',
+      afterState: '{"columns":4}',
       status: 'PENDING',
-      beforeState: null,
-      afterState: JSON.stringify({ id: 'card-1', title: 'New feature' }),
-      createdAt: '2025-03-20T14:00:00Z',
+      createdAt: '2026-04-01T11:00:00Z',
     },
   ],
-  aiGeneratedContent: 'Meeting Summary...',
 };
-```
 
-### Sample Approval Status Response
-
-```typescript
+// Approval Status
 const mockApprovalStatus: ApprovalStatusResponse = {
+  meetingId: 'meeting-1',
+  requiredApprovals: 2,
   currentApprovedCount: 1,
+  currentRejectedCount: 0,
+  totalApproversNeeded: 2,
   responses: [
     {
-      userId: 'user-1',
-      userName: 'Alice',
-      response: 'APPROVED',
-    },
-    {
       userId: 'user-2',
-      userName: 'Bob',
-      response: 'PENDING',
+      userName: 'Jane Smith',
+      response: 'APPROVED',
+      comments: 'Looks good',
+      respondedAt: '2026-04-01T12:00:00Z',
     },
   ],
 };
-```
 
-### Sample Project Members Response
-
-```typescript
+// Project Members
 const mockProjectMembers = [
-  { id: 'user-1', email: 'alice@test.com', username: 'alice', role: 'owner' },
-  { id: 'user-2', email: 'bob@test.com', username: 'bob', role: 'editor' },
+  { id: 'user-1', userId: 'user-1', role: 'owner' },
+  { id: 'user-2', userId: 'user-2', role: 'member' },
 ];
 ```
 
----
+### Mock Setup
 
-## Test Cases
+```typescript
+// jest.mock for react-router
+jest.mock('react-router', () => ({
+  useParams: () => ({ meetingId: 'meeting-1' }),
+  useNavigate: () => jest.fn(),
+}));
 
-### Test Group 1: Component Initialization & Data Loading
+// jest.mock for sonner toast
+jest.mock('sonner', () => ({
+  toast: {
+    success: jest.fn(),
+    error: jest.fn(),
+  },
+}));
 
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 1.1 | Load meeting data successfully | Fetch and render meeting summary | `meetingId: "meeting-1"` | All API calls succeed, user is owner | Meeting, summary, approval data loaded, component renders | Happy path |
-| 1.2 | Load meeting with current user NOT owner | Set `isProjectOwner: false` | `meetingId: "meeting-1"`, current user is not owner | `getProjectMembers` returns members where no owner matches current user | `isProjectOwner: false`, edit buttons disabled | Authorization |
-| 1.3 | Load meeting with no members found | Handle member lookup failure | `meetingId: "meeting-1"`, members list incomplete | `getProjectMembers` returns members but current user not found | `isProjectOwner: false` (fallback) | Error handling |
-| 1.4 | Load meeting with user NOT in localStorage | Handle missing user | `meetingId: "meeting-1"`, no user in localStorage | localStorage empty | `currentUserId: null`, `isProjectOwner: false` | Edge case |
-| 1.5 | Load meeting with invalid JSON in localStorage | Handle malformed user JSON | `meetingId: "meeting-1"`, user JSON invalid | localStorage.getItem returns `"invalid json"` | `currentUserId: null`, `isProjectOwner: false` | Error handling |
-| 1.6 | Load meeting API error | Handle meeting fetch failure | `meetingId: "meeting-1"` | `apiService.getMeeting` throws `Error("Not found")` | Error toast "Not found" displayed, component shows not-found UI | Error handling |
-| 1.7 | Load meeting without meetingId | Skip data loading if no meetingId | No meetingId provided | `useParams` returns empty object | `useEffect` returns early, no API calls made | Guard clause |
-| 1.8 | Unmount before data loads | Handle component unmount during loading | Data loading in progress, component unmounts | `isMounted` flag checked in Promise resolution | Data NOT set after unmount completion | Cleanup |
+// jest.mock for apiService
+jest.mock('../../services/api', () => ({
+  apiService: {
+    getMeeting: jest.fn(),
+    getSummaryByMeeting: jest.fn(),
+    getApprovalStatus: jest.fn(),
+    getProjectMembers: jest.fn(),
+    submitSummaryApproval: jest.fn(),
+    approveActionItem: jest.fn(),
+    approveDecisionItem: jest.fn(),
+    addActionItem: jest.fn(),
+    updateActionItem: jest.fn(),
+    deleteActionItem: jest.fn(),
+    addDecision: jest.fn(),
+    updateDecision: jest.fn(),
+    deleteDecision: jest.fn(),
+  },
+}));
 
-### Test Group 2: Summary Approval Submission
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 2.1 | Approve summary successfully | Submit APPROVED decision with comments | `decision: "APPROVED"`, `comments: "Looks good"` | `apiService.submitSummaryApproval` succeeds | Success toast, meeting/approval/summary reloaded, form elements updated | Happy path |
-| 2.2 | Reject summary successfully | Submit REJECTED decision | `decision: "REJECTED"`, no comments | `apiService.submitSummaryApproval` succeeds | Success toast "Changes requested", data reloaded | Happy path |
-| 2.3 | Approve without comments | Submit approval with empty comments | `decision: "APPROVED"`, `comments: ""` | `apiService.submitSummaryApproval` called with `comments: undefined` | Success toast shown, comments field cleared | Edge case |
-| 2.4 | Approval submission with isSubmitting flag | Prevent double-submit | User clicks Approve twice rapidly | First call sets `isSubmitting: true`, second click ignored | API called once only, button disabled during submission | Concurrency |
-| 2.5 | Approval submission API error | Handle submission failure | `decision: "APPROVED"` | `apiService.submitSummaryApproval` throws `Error("Server error")` | Error toast shown, `isSubmitting` reset to false | Error handling |
-| 2.6 | Approval after already approved | Show current user approval | User already approved, clicking Approve again | Approval response shows current user with previous response | Buttons disabled, current choice displayed | Duplicate check |
-
-### Test Group 3: Item Approval (Actions & Decisions)
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 3.1 | Approve action item | Mark action item as approved | `itemId: "act-1"`, `itemType: "action"` | `apiService.approveActionItem` succeeds, reload succeeds | Success toast, item approval status changed to APPROVED | Happy path |
-| 3.2 | Approve decision item | Mark decision item as approved | `itemId: "dec-1"`, `itemType: "decision"` | `apiService.approveDecisionItem` succeeds, reload succeeds | Success toast, item approval status changed to APPROVED | Happy path |
-| 3.3 | Approve item with approvingItemId flag | Show loading state during approval | Item being approved | `approvingItemId` set to item ID during request | Button shows loading state, prevents multiple clicks | UI feedback |
-| 3.4 | Approve item API error | Handle approval failure | `itemId: "act-1"` | `apiService.approveActionItem` throws `Error("Forbidden")` | Error toast "Forbidden", `approvingItemId` cleared, no state change | Error handling |
-
-### Test Group 4: Action Item Management
-
-#### 4A: Create Action Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 4.1 | Create action item with all fields | Add new action with full context | `actionDescription: "Setup monitoring"`, `sourceContext: "Ops discussion"`, `actionPriority: "HIGH"` | `apiService.addActionItem` succeeds, returns updated summary | Summary updated, editor reset, success toast "Action item added" | Happy path |
-| 4.2 | Create action item minimal | Add action with only description | `actionDescription: "Fix bug"`, `sourceContext: ""`, `actionPriority: "MEDIUM"` | `apiService.addActionItem` receives `{..., sourceContext: undefined}` | API called with undefined sourceContext, item added | Edge case |
-| 4.3 | Create action item empty description | Reject if no description | `actionDescription: ""` | N/A (validation check) | Save button disabled, nothing submitted | Validation |
-| 4.4 | Create action item whitespace description | Trim check before submit | `actionDescription: "   "` | N/A (trim() && check) | Save button preventing submit on trim | Validation |
-| 4.5 | Create action item API error | Handle creation failure | Valid inputs | `apiService.addActionItem` throws `Error("Conflict")` | Error toast "Conflict", editor NOT reset, form remains open | Error handling |
-| 4.6 | Create action disabled when summarized | Cannot add if approval started | Valid inputs | `isAddDisabled: true` (approved summary exists) | Add button disabled, cannot submit | Permission logic |
-
-#### 4B: Update Action Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 4.7 | Edit action item | Update existing action | Existing action clicked for edit, fields modified | `apiService.updateActionItem` succeeds, summary updated | Summary refreshed, editor reset, success toast "Action item updated" | Happy path |
-| 4.8 | Edit action with cleared source context | Update with optional field removed | Source context cleared to empty | `apiService.updateActionItem` receives `sourceContext: undefined` | API call made with undefined field | Edge case |
-| 4.9 | Edit action API error | Handle update failure | Action fields modified | `apiService.updateActionItem` throws `Error("Not found")` | Error toast "Not found", form NOT reset | Error handling |
-| 4.10 | Edit action disabled for non-owner | Non-owner cannot edit | User is not owner | `canEditOrDeleteItems: false` | Edit button disabled, pencil button grey | Authorization |
-
-#### 4C: Delete Action Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 4.11 | Delete action item | Remove action item | `itemId: "act-1"` in removal call | `apiService.deleteActionItem` succeeds, summary updated | Summary refreshed, success toast "Action item removed" | Happy path |
-| 4.12 | Delete action item API error | Handle deletion failure | `itemId: "act-1"` | `apiService.deleteActionItem` throws `Error("Conflict")` | Error toast "Conflict", isSavingItem cleared | Error handling |
-| 4.13 | Delete action disabled for non-owner | Non-owner cannot delete | User is not owner | `canEditOrDeleteItems: false` | Trash button disabled, not clickable | Authorization |
-
-### Test Group 5: Decision Item Management
-
-#### 5A: Create Decision Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 5.1 | Create decision with all fields | Add decision with context and impact | `decisionDescription: "Use PostgreSQL"`, `sourceContext: "DB discussion"`, `decisionImpactSummary: "Improves scalability"` | `apiService.addDecision` succeeds, summary updated | Summary updated, editor reset, success toast "Decision added" | Happy path |
-| 5.2 | Create decision minimal | Add decision with only description | `decisionDescription: "Frontend: React"`, other fields empty | `apiService.addDecision` receives optional fields as `undefined` | API called with undefined optional fields | Edge case |
-| 5.3 | Create decision empty description | Reject empty decision | `decisionDescription: ""` | N/A (validation) | Save button disabled | Validation |
-| 5.4 | Create decision API error | Handle creation failure | Valid decision fields | `apiService.addDecision` throws `Error("Server error")` | Error toast, editor remains open | Error handling |
-| 5.5 | Create decision disabled when finalized | Cannot add if meeting finalized | Valid inputs, `isMeetingFinalized: true` | Meeting status is APPROVED/REJECTED | Add button disabled | Permission logic |
-
-#### 5B: Update Decision Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 5.6 | Edit decision item | Update existing decision | Existing decision clicked, fields modified | `apiService.updateDecision` succeeds | Summary refreshed, editor reset, success toast "Decision updated" | Happy path |
-| 5.7 | Edit decision API error | Handle update failure | Decision fields modified | `apiService.updateDecision` throws `Error("Forbidden")` | Error toast "Forbidden", form NOT reset | Error handling |
-| 5.8 | Edit decision disabled for non-owner | Non-owner cannot edit | User is not owner | `canEditOrDeleteItems: false` | Edit button disabled | Authorization |
-
-#### 5C: Delete Decision Item
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 5.9 | Delete decision item | Remove decision | `itemId: "dec-1"` | `apiService.deleteDecision` succeeds | Summary updated, success toast "Decision removed" | Happy path |
-| 5.10 | Delete decision API error | Handle deletion failure | `itemId: "dec-1"` | `apiService.deleteDecision` throws `Error("Conflict")` | Error toast, isSavingItem cleared | Error handling |
-
-### Test Group 6: State Reset Functions
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 6.1 | Reset action editor | Clear all action editing state | Editor is open for action | `resetActionEditor()` called | All action fields cleared, `editingActionId: null`, `showActionEditor: false` | State cleanup |
-| 6.2 | Reset decision editor | Clear all decision editing state | Editor is open for decision | `resetDecisionEditor()` called | All decision fields cleared, `editingDecisionId: null`, `showDecisionEditor: false` | State cleanup |
-
-### Test Group 7: Change Requests (Parsed from Summary)
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 7.1 | Parse change with valid JSON states | Convert beforeState/afterState JSON strings | Summary has change with `beforeState: '{"id":"1"}'`, `afterState: '{"title":"new"}'` | memoized `changeRequests` computed | ChangeRequest object with parsed `before` and `after` objects | Happy path |
-| 7.2 | Parse change with invalid beforeState JSON | Handle malformed JSON gracefully | `beforeState: "invalid json"` | try/catch in memo | `before: undefined`, change object still created | Error handling |
-| 7.3 | Parse change with null states | Handle null state values | `beforeState: null`, `afterState: null` | memoized compute | `before: undefined`, `after: undefined` | Edge case |
-| 7.4 | Empty changes list | Handle no changes scenario | `summary.changes: []` | Memo computed with empty array | `changeRequests: []` | Empty result |
-
-### Test Group 8: Authorization & Permission Logic
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 8.1 | Owner can edit/delete items | Verify owner has permissions | User is owner, meeting not finalized | `isProjectOwner: true`, `isMeetingFinalized: false` | `canEditOrDeleteItems: true`, edit buttons enabled | Authorization |
-| 8.2 | Non-owner cannot edit items | Verify non-owner restricted | User is not owner | `isProjectOwner: false` | `canEditOrDeleteItems: false`, edit buttons disabled | Authorization |
-| 8.3 | Owner cannot edit after approving | Disable edits after personal approval | User is owner, already approved | `hasSubmittedSummaryDecision: true` | `isItemEditingDisabled: true`, edit buttons disabled | Authorization |
-| 8.4 | Cannot add items after approval | Disable add when summary approved | Any user, summary has approvals | `hasAnyApprovedSummaryDecision: true` | `isAddDisabled: true`, Add buttons disabled | Authorization |
-| 8.5 | Cannot edit when meeting finalized | Disable all editing when meeting complete | Meeting status is APPROVED/REJECTED | `isMeetingFinalized: true` | `isItemEditingDisabled: true`, all edit buttons disabled | Authorization |
-| 8.6 | Current user approval detection | Identify if current user approved | Current user approved, other users pending | Check `currentUserApproval` | `hasSubmittedSummaryDecision: true`, shows "You already responded" | Authorization |
-
-### Test Group 9: Rendering & Conditional Display
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 9.1 | Render meeting not found | Show not-found state | Meeting data is null | `meeting: null` | Shows "Meeting not found" message, Back button visible | Not found |
-| 9.2 | Render meeting details header | Display meeting info | Meeting loaded | Meeting data present | Meeting title, date, time, project name all displayed | Happy path |
-| 9.3 | Render meetings status badge | Show correct status color | Meeting status: APPROVED | Status config mapping applied | Badge shows green "Approved" color/text | Status UI |
-| 9.4 | Render decisions section | Display decision list | Summary with decisions | Decisions array populated | Each decision shown with description, approval status, action buttons | List rendering |
-| 9.5 | Render action items section | Display action items list | Summary with action items | Action items array populated | Each action shown with description, priority, approval status, buttons | List rendering |
-| 9.6 | Render approval responses | Show approval from each user | Approval responses from multiple users | Approval data with responses array | Each response shown as badge with username and response | List rendering |
-| 9.7 | Render decision editor | Show editor form when adding | User clicks Add under Decisions | `showDecisionEditor: true` | Input fields visible, Save/Cancel buttons enabled | Form UI |
-| 9.8 | Render action editor | Show editor form when adding | User clicks Add under Actions | `showActionEditor: true` | Input fields visible, priority select visible, Save/Cancel enabled | Form UI |
-| 9.9 | Render ChangeDetailModal | Display change details when selected | Change clicked from list | `selectedChange` set | Modal rendered with change details, onClose handler passed | Conditional render |
-| 9.10 | Render empty decisions state | Show empty message | No decisions in summary | `summary.decisions: []` | "No decisions yet" message displayed | Empty state |
-| 9.11 | Render empty action items state | Show empty message | No action items in summary | `summary.actionItems: []` | "No action items yet" message displayed | Empty state |
-
-### Test Group 10: UI Interactions & State Management
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 10.1 | Toggle action editor visibility | Open/close action editor | User clicks Add button | `showActionEditor: false` → `true` | Editor form appears, fields initialized | State toggle |
-| 10.2 | Toggle decision editor visibility | Open/close decision editor | User clicks Add button | `showDecisionEditor: false` → `true` | Editor form appears, fields initialized | State toggle |
-| 10.3 | Update action description field | Change description input | User types in action description field | `setActionDescription` called with new value | State updated, input reflects new value | Input handling |
-| 10.4 | Update action priority dropdown | Change priority selection | User selects HIGH from dropdown | `setActionPriority("HIGH")` | State updated, dropdown shows HIGH | Select handling |
-| 10.5 | Update decision description field | Change description input | User types in decision description field | `setDecisionDescription` called with new value | State updated, input reflects new value | Input handling |
-| 10.6 | Update comments field | Change approval comments | User types in comments textarea | `setComments` called with new value | State updated, textarea reflects new value | Textarea handling |
-| 10.7 | Comments disabled when already approved | Prevent comment editing after vote | User already approved | `hasSubmittedSummaryDecision: true` | Comments textarea disabled, cannot type | Permission UI |
-
-### Test Group 11: Complex Data Flows
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 11.1 | Reload summary after item save | Refresh data after add/update/delete | Action item saved | `reloadSummaryAndApproval` called with meetingId | Both summary AND approval data reloaded from API | Data sync |
-| 11.2 | Maintain user context through reloads | User ID persisted across data fetches | User ID in localStorage | Check localStorage once on mount, persist through lifecycle | `currentUserId` stable, multiple reloads work | State persistence |
-| 11.3 | Owner check requires projectMembers fetch | Verify owner requires API call | User is stored, meeting fetched | `getProjectMembers` must be called to verify owner status | Member lookup performed, role checked | Complex fetch |
-| 11.4 | Changes computed from summary | Parse changes from nested summary data | Summary includes changes array | Memo recomputes changeRequests when summary changes | changeRequests updated whenever summary updates | Computed state |
-| 11.5 | Approval counts trigger UI disable | Add button disabled when approvals exist | Summary has ApprovalStatusResponse with responses | `hasAnyApprovedSummaryDecision` checked | Add buttons disabled based on approval count | Derived state |
-
-### Test Group 12: Error Message Handling & Toast Notifications
-
-| # | Test Case | Purpose | Inputs | Mock Setup | Expected Output | Coverage Path |
-|---|---|---|---|---|---|---|
-| 12.1 | Generic error handling in load | Show error message from API | Data loading fails | `apiService.getMeeting` throws `Error("Network error")` | Toast shows "Network error" | Error display |
-| 12.2 | Generic fallback error text | Show default message for unknown errors | Operation fails with generic error | Any API throws non-Error type | Toast shows "Failed to [operation]" default text | Fallback message |
-| 12.3 | Submit approval error message | Display submission error | Approval submission fails | `submitSummaryApproval` throws `Error("Invalid state")` | Toast shows "Invalid state" | Error display |
-| 12.4 | Item save error message | Display save error detail | Action/decision save fails | `addActionItem` throws `Error("Validation error")` | Toast shows "Validation error" | Error display |
+// localStorage mock
+const localStorageMock = {
+  getItem: jest.fn(),
+  setItem: jest.fn(),
+  removeItem: jest.fn(),
+};
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
+```
 
 ---
 
-## Critical Test Execution Notes
+## Test Table
 
-1. **Local Storage Mocking**: Mock localStorage.getItem/setItem for user context
-2. **Async API Calls**: Use `waitFor()` for all async operations; test both success and error paths
-3. **Authorization Flow**: Test combinations of owner/non-owner + approval states
-4. **JSON Parsing**: Test valid/invalid JSON strings in beforeState/afterState
-5. **Disabled States**: Verify button disabled attributes reflect all permission conditions
-6. **State Cleanup**: Verify editor state reset when canceling or after save
-7. **Modal Rendering**: Check ChangeDetailModal props pass correctly
-8. **Memoization**: Verify changeRequests only recomputes when dependencies change
-9. **Multiple Reloads**: Test that reload functions properly update both summary AND approval data
-10. **Unmounting**: Verify isMounted flag prevents state updates after unmount
-
----
-
-## Coverage Summary
-
-| Category | Count | Coverage % |
-|---|---|---|
-| Total Functions | 14 | ~100% |
-| Execution Paths | 82 | ~95% |
-| Happy Paths | 14 | 100% |
-| Error Paths | 26 | 100% |
-| Authorization Paths | 15 | 100% |
-| Edge Cases | 27 | 100% |
-| **Overall Coverage Target** | **82 tests** | **~93%** |
+| # | Purpose | Function/Area | Test Inputs | Expected Output | Mock Config |
+|---|---------|---------------|-------------|-----------------|-------------|
+| 1 | Initial load success | useEffect | `meetingId='m1'`, valid user in localStorage | All data loaded, renders correctly | All APIs resolve |
+| 2 | No meetingId | useEffect | `useParams()` returns `{}` | No API calls, early return | N/A |
+| 3 | Invalid user JSON | useEffect | `localStorage.getItem('user')` returns `{invalid` | `currentUserId=null`, continues loading | localStorage returns invalid JSON |
+| 4 | No user in localStorage | useEffect | `localStorage.getItem('user')` returns `null` | `currentUserId=null`, `isProjectOwner=false` | localStorage returns null |
+| 5 | User is owner | useEffect | Member with `role='OWNER'` | `isProjectOwner=true` | `getProjectMembers` returns owner role |
+| 6 | User is member | useEffect | Member with `role='member'` | `isProjectOwner=false` | `getProjectMembers` returns member role |
+| 7 | Project members fetch fails | useEffect | `getProjectMembers` rejects | `isProjectOwner=false`, silent error | API rejects |
+| 8 | API error on load | useEffect | `getMeeting` rejects with Error | Error toast shown | `getMeeting` rejects |
+| 9 | Non-Error rejection | useEffect | API rejects with string | Fallback error message | `getMeeting` rejects with string |
+| 10 | Unmount during load | useEffect | Component unmounts during API | No state updates after unmount | Delayed API + unmount |
+| 11 | Transform valid change JSON | changeRequests | `beforeState='{"id":"1"}'`, `afterState='{"id":"2"}'` | Parsed objects in result | Valid summary |
+| 12 | Handle invalid change JSON | changeRequests | `beforeState='{'`, `afterState='malformed'` | `before=undefined`, `after=undefined` | Summary with invalid JSON |
+| 13 | Empty changes array | changeRequests | `summary=null` | Returns `[]` | summary is null |
+| 14 | Submit APPROVED | submitDecision | `decision='APPROVED'`, `comments='Good'` | "Summary approved" toast, state refreshed | All APIs resolve |
+| 15 | Submit REJECTED | submitDecision | `decision='REJECTED'`, `comments=''` | "Changes requested" toast | All APIs resolve |
+| 16 | No meetingId | submitDecision | `meetingId=null` | Early return | useParams returns null |
+| 17 | Submit API error | submitDecision | API rejects Error | Error toast with message | `submitSummaryApproval` rejects |
+| 18 | Submit non-Error rejection | submitDecision | API rejects string | Fallback error message | API rejects with string |
+| 19 | Refresh fails after submit | submitDecision | Submit OK, refresh fails | Error toast | Selective reject |
+| 20 | Approve action item | approveItem | `itemId='a1'`, `itemType='action'` | Success toast, data reloaded | `approveActionItem` resolves |
+| 21 | Approve decision item | approveItem | `itemId='d1'`, `itemType='decision'` | Success toast, `approveDecisionItem` called | `approveDecisionItem` resolves |
+| 22 | Approve item no meetingId | approveItem | `meetingId=null` | Early return | useParams returns null |
+| 23 | Approve action fails | approveItem | `itemType='action'`, API rejects | Error toast | `approveActionItem` rejects |
+| 24 | Approve decision fails | approveItem | `itemType='decision'`, API rejects | Error toast | `approveDecisionItem` rejects |
+| 25 | Create action item | saveActionItem | `editingActionId=null`, valid desc | "Action item added" toast | `addActionItem` resolves |
+| 26 | Update action item | saveActionItem | `editingActionId='a1'`, valid desc | "Action item updated" toast | `updateActionItem` resolves |
+| 27 | Empty description | saveActionItem | `actionDescription=''` | Early return, no API call | Empty string |
+| 28 | Whitespace description | saveActionItem | `actionDescription='   '` | Early return (trim makes empty) | Whitespace only |
+| 29 | No meetingId | saveActionItem | `meetingId=null` | Early return | Null meetingId |
+| 30 | Create action fails | saveActionItem | API rejects Error | Error toast | `addActionItem` rejects |
+| 31 | Update action fails | saveActionItem | `editingActionId` set, API rejects | Error toast | `updateActionItem` rejects |
+| 32 | Trim sourceContext | saveActionItem | `sourceContext='  ctx  '` | Sends trimmed value | Verify payload |
+| 33 | Empty sourceContext | saveActionItem | `sourceContext=''` | Sends `undefined` | Verify payload |
+| 34 | Create decision | saveDecisionItem | `editingDecisionId=null` | "Decision added" toast | `addDecision` resolves |
+| 35 | Update decision | saveDecisionItem | `editingDecisionId='d1'` | "Decision updated" toast | `updateDecision` resolves |
+| 36 | Empty decision desc | saveDecisionItem | `decisionDescription=''` | Early return | Empty string |
+| 37 | Decision save error | saveDecisionItem | API rejects | Error toast | `addDecision` rejects |
+| 38 | Remove action item | removeActionItem | `itemId='a1'` | "Action item removed" toast | `deleteActionItem` resolves |
+| 39 | Remove action fails | removeActionItem | API rejects | Error toast | `deleteActionItem` rejects |
+| 40 | Remove decision item | removeDecisionItem | `itemId='d1'` | "Decision removed" toast | `deleteDecision` resolves |
+| 41 | Remove decision fails | removeDecisionItem | API rejects | Error toast | `deleteDecision` rejects |
+| 42 | Reset action editor | resetActionEditor | N/A | All action form state cleared | State check |
+| 43 | Reset decision editor | resetDecisionEditor | N/A | All decision form state cleared | State check |
+| 44 | Compute user approval | currentUserApproval | User has APPROVED response | Returns response object | Mock approval with user response |
+| 45 | Compute hasSubmitted true | hasSubmittedSummaryDecision | `currentUserApproval` exists | `true` | User voted |
+| 46 | Compute hasSubmitted false | hasSubmittedSummaryDecision | No user response | `false` | User not voted |
+| 47 | Compute hasAnyApproved true | hasAnyApprovedSummaryDecision | `currentApprovedCount=1` | `true` | Approval exists |
+| 48 | Compute isFinalized APPROVED | isMeetingFinalized | `status='APPROVED'` | `true` | Finalized |
+| 49 | Compute isFinalized REJECTED | isMeetingFinalized | `status='REJECTED'` | `true` | Finalized |
+| 50 | Compute isFinalized false | isMeetingFinalized | `status='SCHEDULED'` | `false` | Not finalized |
+| 51 | Compute editing disabled (finalized) | isItemEditingDisabled | `isMeetingFinalized=true` | `true` | Editing blocked |
+| 52 | Compute editing disabled (voted) | isItemEditingDisabled | `hasSubmittedSummaryDecision=true` | `true` | Editing blocked |
+| 53 | Compute canEdit true | canEditOrDeleteItems | Owner, editing enabled | `true` | Can edit |
+| 54 | Compute canEdit false (not owner) | canEditOrDeleteItems | Not owner | `false` | Cannot edit |
+| 55 | Compute canEdit false (finalized) | canEditOrDeleteItems | Owner, finalized | `false` | Cannot edit |
+| 56 | Compute add disabled (voted) | isAddDisabled | `hasSubmittedSummaryDecision=true` | `true` | Add blocked |
+| 57 | Compute add disabled (any approval) | isAddDisabled | `hasAnyApprovedSummaryDecision=true` | `true` | Add blocked |
+| 58 | Reload summary | reloadSummaryAndApproval | `id='m1'` | Summary and approval updated | APIs resolve |
+| 59 | Meeting not found | Render | `meeting=null` | "Meeting not found" message | All APIs return null/404 |
+| 60 | Status badge display | Render | `status='PENDING_APPROVAL'` | Yellow badge | Status config |
+| 61 | Disable buttons when voted | Render | `hasSubmittedSummaryDecision=true` | Approve buttons disabled | User response exists |
+| 62 | Owner sees edit buttons | Render | `isProjectOwner=true`, editing enabled | Edit/delete buttons enabled | Owner permissions |
+| 63 | Member doesn't see edit | Render | `isProjectOwner=false` | Edit buttons disabled | Non-owner |
+| 64 | Decision editor opens | Render | Click "Add" button | Editor form visible | `showDecisionEditor=true` |
+| 65 | Action editor opens | Render | Click "Add" button | Editor form visible | `showActionEditor=true` |
+| 66 | Change modal opens | Render | Click change item | `ChangeDetailModal` visible | `selectedChange` set |
+| 67 | Navigate back | Render | Click "Back to Meetings" | Navigation called | `navigate()` called |
+| 68 | Navigate to decisions | Render | Click "Go to Decisions" | Navigation called | `navigate()` called |
+| 69 | Navigate to changes | Render | Click "Review Changes" | Navigation called | `navigate()` called |
+| 70 | Comments input disabled | Render | `hasSubmittedSummaryDecision=true` | Textarea disabled | After voting |
