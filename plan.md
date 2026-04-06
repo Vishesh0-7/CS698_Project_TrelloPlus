@@ -50,23 +50,30 @@ Deploy the P4 backend as AWS Lambda functions exposed through API Gateway REST A
 
 ## 3. LLM Integration and Deployment
 ### Objective
-Use LLM-assisted workflows to accelerate deployment automation and integration testing while enforcing strict verification to avoid hallucinated changes, ensuring reliable prompt-driven operations for a student team.
+Replace all mocked LLM features with a real locally hosted model running on a cloud server, exposed through a secure backend integration path, with automated validation and deployment controls.
 
 ### Key Tasks
-- Use an LLM to generate first-draft deployment scripts and workflows for AWS Lambda, API Gateway, and Amplify, including GitHub Actions YAML, infrastructure templates, and runbooks.
-- Use an LLM to draft integration tests covering frontend and backend paths, including login and session, board and task CRUD, failure cases, and API contract checks.
-- Apply a multi-agent verification approach where Agent A generates scripts and tests, Agent B reviews service names, IAM scopes, API routes, and workflow triggers against AWS and GitHub documentation, and Agent C executes CI checks and integration tests to reject outputs that fail execution.
-- Enforce evidence-based validation for every LLM output through syntax linting, dry-run or plan output, test execution logs, and pull request checklist sign-off.
+- Select and benchmark one local model for deployment (for example Llama 3.1 8B or Mistral 7B) based on latency, GPU memory, and output quality for project use cases.
+- Provision a cloud inference host on AWS EC2 with GPU support and Dockerized model serving (vLLM or Ollama), restricted to private network access.
+- Define backend integration contract so the Lambda backend calls the LLM host through a private endpoint, with request timeouts, retry policy, circuit breaker fallback, and structured error responses.
+- Store model host URL and API secrets in AWS Secrets Manager and pass configuration to Lambda through environment variables.
+- Add observability: request and response metadata logging, token usage, p95 latency, error rate, and model health checks surfaced in CloudWatch dashboards.
+- Implement integration tests for real LLM flow: frontend prompt submission, backend orchestration, model response rendering, and failure-mode handling when model host is unavailable.
+- Add GitHub Actions jobs for LLM path verification: schema validation, prompt regression tests, integration tests against staging model endpoint, and deployment gating.
+- Apply a verification pipeline for hallucination control using a multi-agent approach: Agent A drafts output, Agent B checks factual and policy constraints against approved sources, Agent C executes deterministic validators and rejects unverifiable outputs.
 - Enforce team policy: no direct code edits — only prompt-based modifications, with all generated outputs committed through reviewed pull requests.
-- Add sprint governance in GitHub using a weekly planning issue, a deployment checklist template, and required pull request template fields for prompt used, verification evidence, and rollback notes.
+- Keep branch protection active with required checks for LLM integration tests, security scan, and reviewer approval before merge to main.
 
 ### Deliverables
-- Prompt library for deployment scripts, CI workflows, and integration test generation.
-- Verified GitHub Actions workflows and integration tests with execution evidence.
-- LLM verification checklist and multi-agent review protocol documented for repeat use.
-- Sprint timeline (4 weeks): Week 1 covers Amplify setup, Lambda packaging baseline, and branch protection with workflow scaffolding; Week 2 covers API Gateway REST integration, staged deployments, and initial integration tests; Week 3 covers full CI/CD automation, LLM-generated script and test refinement, and verification hardening; Week 4 covers end-to-end validation, rollback drill, documentation freeze, and sprint demo.
+- Running cloud-hosted local model endpoint connected to backend non-production environment.
+- Backend integration module replacing all mocked LLM calls with real inference calls and fallback behavior.
+- GitHub Actions workflow that validates and gates LLM-related deployments.
+- Integration test suite and report proving frontend to backend to LLM end-to-end behavior.
+- LLM safety and verification checklist documenting hallucination prevention, escalation, and rejection criteria.
+- Sprint timeline (4 weeks): Week 1 covers model selection, EC2 provisioning, and secure networking; Week 2 covers backend connector, secrets management, and staging endpoint tests; Week 3 covers end-to-end integration tests, GitHub Actions gating, and observability hardening; Week 4 covers load and failure drills, rollback rehearsal, and production readiness sign-off.
 
 ### Risks & Mitigations
-- Risk: LLM hallucinations produce invalid AWS commands or insecure configuration. Mitigation: Require multi-agent review plus executable validation before merge and reject unverified output.
-- Risk: Over-reliance on prompts without system understanding. Mitigation: Assign a student owner review for each generated artifact and require runbook explanation.
-- Risk: Prompt drift causes inconsistent outputs. Mitigation: Version prompts in the repository and require prompt ID and version in each pull request.
+- Risk: Model host downtime or GPU exhaustion causes user-facing failures. Mitigation: Add health checks, autoscaling or warm standby option, strict timeout and retry limits, and graceful fallback messages.
+- Risk: High latency from Lambda to model host impacts UX. Mitigation: Place services in same AWS region and VPC path, optimize model size and quantization, and monitor latency SLOs in CloudWatch.
+- Risk: Hallucinated or unsafe model output reaches users. Mitigation: Enforce multi-agent verification, deterministic output validators, and block responses that fail policy checks.
+- Risk: Secret leakage or insecure endpoint exposure. Mitigation: Keep endpoint private, use IAM roles and Secrets Manager, rotate keys, and enforce least-privilege network rules.
