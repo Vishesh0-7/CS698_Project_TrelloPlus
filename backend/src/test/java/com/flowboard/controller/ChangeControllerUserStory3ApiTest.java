@@ -20,11 +20,14 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -123,6 +126,40 @@ class ChangeControllerUserStory3ApiTest {
     }
 
     @Test
+    void getImpact_returnsOk() throws Exception {
+        when(changePreviewService.getImpact(changeId, userId)).thenReturn(ChangeImpactDTO.builder()
+            .affectedCards(List.of("card-1"))
+            .affectedStages(List.of())
+            .riskLevel("LOW")
+            .potentialConflicts(List.of())
+            .build());
+
+        mockMvc.perform(get("/changes/{id}/impact", changeId)
+                .header("Authorization", "Bearer valid-token"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.riskLevel").value("LOW"));
+    }
+
+    @Test
+    void getHistory_returnsOk() throws Exception {
+        when(changePreviewService.getHistory(changeId, userId)).thenReturn(List.of(
+            ChangeHistoryEntryDTO.builder()
+                .id(UUID.randomUUID())
+                .action("APPROVED")
+                .actorId(userId)
+                .actorName("reviewer")
+                .details("{\"decision\":\"APPROVE\"}")
+                .createdAt(LocalDateTime.now())
+                .build()
+        ));
+
+        mockMvc.perform(get("/changes/{id}/history", changeId)
+                .header("Authorization", "Bearer valid-token"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].action").value("APPROVED"));
+    }
+
+    @Test
     @WithMockUser(username = "reviewer@example.com")
     void approve_returnsApprovalStatus() throws Exception {
         ChangeDecisionRequest request = ChangeDecisionRequest.builder()
@@ -161,5 +198,91 @@ class ChangeControllerUserStory3ApiTest {
         mockMvc.perform(post("/changes/{id}/apply", changeId))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("APPLIED"));
+    }
+
+    @Test
+    @WithMockUser(username = "reviewer@example.com")
+    void reject_returnsApprovalStatus() throws Exception {
+        ChangeDecisionRequest request = ChangeDecisionRequest.builder()
+            .decision("REJECT")
+            .feedback("Needs correction")
+            .build();
+
+        when(changeApprovalService.decide(eq(changeId), any(User.class), any(ChangeDecisionRequest.class)))
+            .thenReturn(ApprovalStatusDTO.builder()
+                .meetingId(meetingId)
+                .requiredApprovals(2)
+                .currentApprovedCount(0)
+                .currentRejectedCount(1)
+                .totalApproversNeeded(3)
+                .responses(Collections.emptyList())
+                .build());
+
+        mockMvc.perform(post("/changes/{id}/reject", changeId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentRejectedCount").value(1));
+    }
+
+    @Test
+    void getApprovalStatus_returnsOk() throws Exception {
+        doReturn(ApprovalStatusDTO.builder()
+            .meetingId(meetingId)
+            .requiredApprovals(2)
+            .currentApprovedCount(1)
+            .currentRejectedCount(0)
+            .totalApproversNeeded(3)
+            .responses(Collections.emptyList())
+            .build()).when(changeApprovalService).getApprovalStatus(changeId);
+
+        mockMvc.perform(get("/changes/{id}/approval-status", changeId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.requiredApprovals").value(2));
+    }
+
+    @Test
+    void approve_withoutAuthentication_returnsUnauthorized() throws Exception {
+        ChangeDecisionRequest request = ChangeDecisionRequest.builder()
+            .decision("APPROVE")
+            .build();
+
+        mockMvc.perform(post("/changes/{id}/approve", changeId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void apply_withoutAuthentication_returnsUnauthorized() throws Exception {
+        mockMvc.perform(post("/changes/{id}/apply", changeId))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "missing@example.com")
+    void apply_withAuthenticatedUnknownUser_returnsUnauthorized() throws Exception {
+        when(userRepository.findByEmailIgnoreCase("missing@example.com")).thenReturn(Optional.empty());
+
+        mockMvc.perform(post("/changes/{id}/apply", changeId))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @WithMockUser(username = "reviewer@example.com")
+    void submitDecision_withInvalidDecision_returnsBadRequest() throws Exception {
+        ChangeDecisionRequest request = ChangeDecisionRequest.builder()
+            .decision("NOT_A_VALID_DECISION")
+            .build();
+
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.BAD_REQUEST,
+            "Invalid decision"
+        )).when(changeApprovalService).decide(eq(changeId), any(User.class), any(ChangeDecisionRequest.class));
+
+        mockMvc.perform(post("/changes/{id}/decision", changeId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isBadRequest());
     }
 }

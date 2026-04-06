@@ -36,12 +36,8 @@ public class ChangeApplicationService {
 
         ensureProjectOwner(change, actor.getId());
 
-        // Allow mocked/generated changes (PENDING/UNDER_REVIEW) to be applied directly for now.
-        // This keeps the flow LLM-ready while supporting current mock data generation.
         if (change.getStatus() != Change.ChangeStatus.READY_FOR_APPLICATION &&
-            change.getStatus() != Change.ChangeStatus.APPROVED &&
-            change.getStatus() != Change.ChangeStatus.PENDING &&
-            change.getStatus() != Change.ChangeStatus.UNDER_REVIEW) {
+            change.getStatus() != Change.ChangeStatus.APPROVED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Change is not ready for application");
         }
 

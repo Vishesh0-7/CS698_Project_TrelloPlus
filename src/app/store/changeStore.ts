@@ -66,6 +66,11 @@ export const useChangeStore = create<ChangeStore>((set, get) => ({
       changes: state.changes.map((change) => {
         if (change.id !== changeId) return change;
 
+        const hasMatchingApprover = change.approvals.some((approval) => approval.userId === userId);
+        if (!hasMatchingApprover) {
+          return change;
+        }
+
         const updatedApprovals = change.approvals.map((approval) =>
           approval.userId === userId
             ? { ...approval, status: 'approved' as const, timestamp: new Date().toISOString(), feedback }
@@ -113,7 +118,7 @@ export const useChangeStore = create<ChangeStore>((set, get) => ({
   applyChange: (changeId, userId, userName) => {
     set((state) => ({
       changes: state.changes.map((change) =>
-        change.id === changeId
+        change.id === changeId && (change.status === 'READY_FOR_APPLICATION' || change.status === 'APPROVED')
           ? {
               ...change,
               status: 'APPLIED',
