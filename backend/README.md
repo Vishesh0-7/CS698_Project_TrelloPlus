@@ -84,7 +84,7 @@ Recommended: copy `.env.example` from the repository root and set secure values 
 - `JWT_SECRET` (minimum 32 chars)
 - `CORS_ALLOWED_ORIGINS`
 - `APP_LOG_LEVEL`, `SECURITY_LOG_LEVEL`
-- `OPENAI_API_KEY` (mock in P4)
+- `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_SECONDS`
 
 ## Testing
 

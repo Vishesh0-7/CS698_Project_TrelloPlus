@@ -2,6 +2,7 @@ import type { BoardTask, Project, ProjectMember } from '../store/projectStore';
 
 const API_BASE_URL = 'http://localhost:8080/api/v1';
 const REQUEST_TIMEOUT_MS = 15000;
+const LLM_REQUEST_TIMEOUT_MS = 60000;
 
 interface LoginRequest {
   email: string;
@@ -373,7 +374,7 @@ export const apiService = {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(request),
-    });
+    }, LLM_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
       throw new Error(await parseApiErrorMessage(response, 'Project creation failed'));
@@ -694,7 +695,7 @@ export const apiService = {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ meetingId }),
-    });
+    }, LLM_REQUEST_TIMEOUT_MS);
 
     if (!response.ok) {
       throw new Error(await parseApiErrorMessage(response, 'Failed to generate summary'));

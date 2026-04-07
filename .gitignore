@@ -98,10 +98,15 @@ pnpm-workspace.yaml
 # IDE workspace settings (keep .vscode/settings.json but ignore others)
 .vscode/launch.json
 .vscode/extensions.json
-
+LLM_DEPLOYMENT_PLAN.md
 # ----- Backend / Maven / Java -----
 # Maven build output
 target/
+# Local LLM artifacts
+llm-models/
+models/
+*.gguf
+*.safetensors
 # Compiled classes (sometimes present outside target)
 classes/
 # Maven generated/backup files

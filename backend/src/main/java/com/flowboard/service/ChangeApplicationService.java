@@ -36,6 +36,16 @@ public class ChangeApplicationService {
 
         ensureProjectOwner(change, actor.getId());
 
+        if (isMeetingApprovedOwnerPath(change)) {
+            change.setStatus(Change.ChangeStatus.READY_FOR_APPLICATION);
+            changeRepository.save(change);
+            broadcastService.broadcastChangeStatusChanged(
+                change.getMeeting().getProject().getId(),
+                changeId,
+                Change.ChangeStatus.READY_FOR_APPLICATION.name()
+            );
+        }
+
         if (change.getStatus() != Change.ChangeStatus.READY_FOR_APPLICATION &&
             change.getStatus() != Change.ChangeStatus.APPROVED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Change is not ready for application");
@@ -86,6 +96,16 @@ public class ChangeApplicationService {
 
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Change application failed: " + ex.getMessage());
         }
+    }
+
+    private boolean isMeetingApprovedOwnerPath(Change change) {
+        if (change.getStatus() == Change.ChangeStatus.READY_FOR_APPLICATION ||
+            change.getStatus() == Change.ChangeStatus.APPROVED) {
+            return false;
+        }
+
+        Meeting.MeetingStatus meetingStatus = change.getMeeting().getStatus();
+        return meetingStatus == Meeting.MeetingStatus.APPROVED;
     }
 
     private void ensureProjectOwner(Change change, UUID userId) {
