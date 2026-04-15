@@ -1,8 +1,21 @@
 import type { BoardTask, Project, ProjectMember } from '../store/projectStore';
 import { API_BASE_URL } from './runtimeConfig';
 
-const REQUEST_TIMEOUT_MS = 15000;
-const LLM_REQUEST_TIMEOUT_MS = 60000;
+const parseTimeout = (value: string | undefined, fallbackMs: number): number => {
+  if (!value) {
+    return fallbackMs;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+
+  return Math.floor(parsed);
+};
+
+const REQUEST_TIMEOUT_MS = parseTimeout(import.meta.env.VITE_REQUEST_TIMEOUT_MS, 15000);
+const LLM_REQUEST_TIMEOUT_MS = parseTimeout(import.meta.env.VITE_LLM_REQUEST_TIMEOUT_MS, 60000);
 
 interface LoginRequest {
   email: string;

@@ -89,6 +89,8 @@ The frontend reads deployment settings from Vite env vars. For local development
 
 - `VITE_API_BASE_URL` - REST API base URL, for example `https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/api/v1`
 - `VITE_WS_ENDPOINT` - WebSocket/SockJS endpoint, for example `https://your-backend-host/api/v1/ws/board`
+- `VITE_REQUEST_TIMEOUT_MS` - Optional frontend timeout for regular API calls in milliseconds, for example `30000`
+- `VITE_LLM_REQUEST_TIMEOUT_MS` - Optional frontend timeout for long AI/summary requests in milliseconds, for example `90000`
 
 If you only deploy the REST API to API Gateway, keep the WebSocket endpoint on a backend host that supports SockJS or disable the realtime board hook until you add a WebSocket-compatible AWS endpoint.
 
