@@ -1,6 +1,6 @@
 import type { BoardTask, Project, ProjectMember } from '../store/projectStore';
+import { API_BASE_URL } from './runtimeConfig';
 
-const API_BASE_URL = 'http://localhost:8080/api/v1';
 const REQUEST_TIMEOUT_MS = 15000;
 const LLM_REQUEST_TIMEOUT_MS = 60000;
 

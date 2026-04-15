@@ -36,6 +36,18 @@ cd backend
 mvn clean install
 ```
 
+## Lambda Packaging
+
+Build a Lambda-friendly jar for AWS API Gateway + Lambda proxy integration:
+
+```bash
+cd backend
+mvn -Plambda clean package
+zip -j flowboard-backend-lambda.zip target/flowboard-backend-1.0.0.jar
+```
+
+Use `com.flowboard.lambda.StreamLambdaHandler` as the Lambda handler in the AWS console.
+
 ## Running
 
 ```bash
