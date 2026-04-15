@@ -86,8 +86,31 @@ public class ProjectService {
             ensureSufficientDescriptionForGeneration(normalizedDescription);
         }
 
-        if (!projectRepository.findActiveByOwnerAndNameIgnoreCase(owner, normalizedName).isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Project name already exists for this owner");
+        List<Project> existingProjects = projectRepository.findActiveByOwnerAndNameIgnoreCase(owner, normalizedName);
+        if (!existingProjects.isEmpty()) {
+            Project existingProject = existingProjects.stream()
+                .max(Comparator.comparing(Project::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(existingProjects.get(0));
+
+            String existingDescription = normalizeOptionalText(existingProject.getDescription(), PROJECT_DESCRIPTION_MAX, "Project description");
+            if (!java.util.Objects.equals(existingDescription, normalizedDescription)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Project name already exists for this owner");
+            }
+
+            List<Board> existingBoards = boardRepository.findByProjectId(existingProject.getId());
+            Board board;
+            if (!existingBoards.isEmpty()) {
+                board = existingBoards.get(0);
+            } else if (generateTasks) {
+                AIAnalysisResult analysisResult = aiEngine.analyzeProjectDescription(normalizedName, normalizedDescription);
+                board = boardGenerator.generateBoard(existingProject, analysisResult);
+                broadcastService.broadcastProjectUpdated(existingProject.getId(), toProjectDTO(existingProject, board));
+            } else {
+                board = boardGenerator.generateEmptyBoard(existingProject);
+                broadcastService.broadcastProjectUpdated(existingProject.getId(), toProjectDTO(existingProject, board));
+            }
+
+            return toProjectDTO(existingProject, board);
         }
 
         // Create project

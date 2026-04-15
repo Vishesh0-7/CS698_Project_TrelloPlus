@@ -83,6 +83,36 @@ npm run build
 
 The application will be available at `http://localhost:5173`
 
+### Frontend Environment Variables
+
+The frontend reads deployment settings from Vite env vars. For local development, the defaults in `.env.example` point to the local backend. For AWS deployment, set these in Amplify to your API Gateway and realtime endpoint:
+
+- `VITE_API_BASE_URL` - REST API base URL, for example `https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/api/v1`
+- `VITE_WS_ENDPOINT` - WebSocket/SockJS endpoint, for example `https://your-backend-host/api/v1/ws/board`
+
+If you only deploy the REST API to API Gateway, keep the WebSocket endpoint on a backend host that supports SockJS or disable the realtime board hook until you add a WebSocket-compatible AWS endpoint.
+
+## 🚀 Simple Deployment: Render + Vercel
+
+If you want the lowest-friction production setup for this repo, use Render for the backend and Vercel for the frontend.
+
+### Render Backend
+- Create a new Render service from the repository and point it at `render.yaml`, or create a Java web service manually with `backend` as the root directory.
+- Set `SPRING_PROFILES_ACTIVE=prod`.
+- Set `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, and `CORS_ALLOWED_ORIGINS` in Render.
+- If you use Render Postgres, copy its JDBC connection string into `DB_URL`.
+- Optional: set `OLLAMA_BASE_URL` if the AI features should talk to a deployed Ollama service.
+
+### Vercel Frontend
+- Import the repository into Vercel and keep the project root at the repo root.
+- Set `VITE_API_BASE_URL` to your Render backend URL, for example `https://your-backend.onrender.com/api/v1`.
+- Set `VITE_WS_ENDPOINT` to the websocket endpoint on that backend, for example `https://your-backend.onrender.com/api/v1/ws/board`.
+- `vercel.json` handles client-side routing so deep links like `/board/:projectId` work after refresh.
+
+### Build Commands
+- Frontend build: `npm run build`
+- Backend build: `cd backend && mvn -DskipTests package`
+
 ## 🚀 Getting Started
 
 ### Create a New Project

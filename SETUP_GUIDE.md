@@ -93,7 +93,9 @@ Set at minimum:
 For production-like runs also set:
 
 - SPRING_PROFILES_ACTIVE=prod
-- OPENAI_API_KEY if AI mock is disabled
+- OLLAMA_BASE_URL
+- OLLAMA_MODEL
+- OLLAMA_TIMEOUT_SECONDS
 
 ## Startup Procedures
 

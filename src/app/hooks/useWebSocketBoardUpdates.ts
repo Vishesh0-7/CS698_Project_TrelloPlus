@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import SockJS from 'sockjs-client';
 import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
 import { useProjectStore } from '../store/projectStore';
+import { WS_ENDPOINT } from '../services/runtimeConfig';
 
 interface CardDTO {
   id: string;
@@ -41,8 +42,6 @@ interface TeamMemberRoleChangedEvent {
   memberId: string;
   newRole: string;
 }
-
-const WS_ENDPOINT = 'http://localhost:8080/api/v1/ws/board';
 
 export const useWebSocketBoardUpdates = (boardId: string | null, projectId: string | null = null) => {
   const stompClientRef = useRef<Client | null>(null);
