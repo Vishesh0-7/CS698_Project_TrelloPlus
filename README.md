@@ -378,7 +378,7 @@ See project documentation for licensing information.
 ## 🏆 Team
 
 - **Luke Hill** - Lead Architect (Dev Spec 1)
-- **Vishesh Raju** - Deployment engineer & Developer (Dev Spec 2)
+- **Vishesh Raju** - Developer (Dev Spec 2)
 - **Swechcha Ambati** - Software Engineer (Dev Spec 3)
 
 
