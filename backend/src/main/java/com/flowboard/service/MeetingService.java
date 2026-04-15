@@ -14,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -24,6 +25,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Transactional
 public class MeetingService {
+    private static final Duration SCHEDULE_GRACE_PERIOD = Duration.ofMinutes(1);
+
     private final MeetingRepository meetingRepository;
     private final MeetingMemberRepository meetingMemberRepository;
     private final ProjectRepository projectRepository;
@@ -49,7 +52,7 @@ public class MeetingService {
 
         LocalTime effectiveMeetingTime = request.getMeetingTime() != null ? request.getMeetingTime() : LocalTime.MIDNIGHT;
         LocalDateTime scheduledAt = request.getMeetingDate().atTime(effectiveMeetingTime);
-        if (scheduledAt.isBefore(LocalDateTime.now())) {
+        if (scheduledAt.isBefore(LocalDateTime.now().minus(SCHEDULE_GRACE_PERIOD))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting cannot be scheduled in the past");
         }
 
@@ -182,7 +185,7 @@ public class MeetingService {
 
         LocalTime effectiveTime = request.getMeetingTime() != null ? request.getMeetingTime() : LocalTime.MIDNIGHT;
         LocalDateTime scheduledAt = request.getMeetingDate().atTime(effectiveTime);
-        if (scheduledAt.isBefore(LocalDateTime.now())) {
+        if (scheduledAt.isBefore(LocalDateTime.now().minus(SCHEDULE_GRACE_PERIOD))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Meeting cannot be scheduled in the past");
         }
 

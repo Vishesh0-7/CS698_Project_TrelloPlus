@@ -93,7 +93,7 @@ Configure backend values with environment variables.
 
 Recommended: copy `.env.example` from the repository root and set secure values for:
 - `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
-- `JWT_SECRET` (minimum 32 chars)
+- `JWT_SECRET` (minimum 32 bytes, for example generate with `openssl rand -base64 48`)
 - `CORS_ALLOWED_ORIGINS`
 - `APP_LOG_LEVEL`, `SECURITY_LOG_LEVEL`
 - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_SECONDS`

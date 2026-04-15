@@ -16,6 +16,15 @@ interface ProjectMember {
   email: string;
 }
 
+const getLocalDateInputValue = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+};
+
 export function CreateMeeting() {
   const navigate = useNavigate();
 
@@ -102,8 +111,8 @@ export function CreateMeeting() {
       return;
     }
 
-    if (!title.trim() || !date || !time || selectedMemberIds.length === 0) {
-      toast.error('Please fill in all required fields and select at least one team member');
+    if (!title.trim() || !date || !time) {
+      toast.error('Please fill in all required fields');
       return;
     }
 
@@ -127,7 +136,7 @@ export function CreateMeeting() {
         meetingTime: `${time}:00`,
         platform: platform.trim() || undefined,
         meetingLink: link.trim() || undefined,
-        additionalMemberIds: selectedMemberIds,
+        additionalMemberIds: selectedMemberIds.length > 0 ? selectedMemberIds : undefined,
       });
 
       toast.success('Meeting created successfully');
@@ -219,7 +228,7 @@ export function CreateMeeting() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                min={new Date().toISOString().split('T')[0]}
+                min={getLocalDateInputValue()}
               />
             </div>
             <div>
@@ -251,7 +260,7 @@ export function CreateMeeting() {
             ) : projectMembers.length === 0 ? (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <p className="text-sm text-yellow-800">
-                  No team members found for this project. Please add members to the project first.
+                  No additional team members found for this project. The meeting will still include the project owner.
                 </p>
               </div>
             ) : (
@@ -350,7 +359,7 @@ export function CreateMeeting() {
             <Button
               onClick={handleCreateMeeting}
               className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-              disabled={!selectedProjectId || projectMembers.length === 0 || selectedMemberIds.length === 0 || loadingProjects || loadingMembers}
+              disabled={!selectedProjectId || loadingProjects || loadingMembers}
             >
               Create Meeting
             </Button>

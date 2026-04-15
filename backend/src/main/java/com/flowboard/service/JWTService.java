@@ -4,12 +4,14 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -28,6 +30,26 @@ public class JWTService {
 
     private final ConcurrentMap<String, Long> revokedTokens = new ConcurrentHashMap<>();
 
+    @PostConstruct
+    public void validateSecret() {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET is required and must be at least 32 bytes long for HS256.");
+        }
+
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < 32) {
+            throw new IllegalStateException(
+                "JWT_SECRET must be at least 32 bytes (256 bits) for HS256; current length is "
+                    + keyBytes.length
+                    + " bytes. Generate a longer secret and update the Lambda environment variable."
+            );
+        }
+    }
+
+    private byte[] getSecretBytes() {
+        return secret.getBytes(StandardCharsets.UTF_8);
+    }
+
     public String generateToken(UUID userId, String email, String role) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("role", role);
@@ -38,7 +60,7 @@ public class JWTService {
             .setSubject(email)
             .setIssuedAt(new Date())
             .setExpiration(new Date(System.currentTimeMillis() + expiration))
-            .signWith(Keys.hmacShaKeyFor(secret.getBytes()), SignatureAlgorithm.HS256)
+            .signWith(Keys.hmacShaKeyFor(getSecretBytes()), SignatureAlgorithm.HS256)
             .compact();
     }
 
@@ -61,7 +83,7 @@ public class JWTService {
                 return false;
             }
             Jwts.parser()
-                .verifyWith(Keys.hmacShaKeyFor(secret.getBytes()))
+                .verifyWith(Keys.hmacShaKeyFor(getSecretBytes()))
                 .build()
                 .parseSignedClaims(token);
             return true;
@@ -117,7 +139,7 @@ public class JWTService {
 
     private Claims getAllClaims(String token) {
         return Jwts.parser()
-            .verifyWith(Keys.hmacShaKeyFor(secret.getBytes()))
+            .verifyWith(Keys.hmacShaKeyFor(getSecretBytes()))
             .build()
             .parseSignedClaims(token)
             .getPayload();

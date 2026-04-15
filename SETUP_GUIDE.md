@@ -87,7 +87,7 @@ Set at minimum:
 - DB_URL
 - DB_USERNAME
 - DB_PASSWORD
-- JWT_SECRET (minimum 32 characters)
+- JWT_SECRET (minimum 32 bytes, for example generate with `openssl rand -base64 48`)
 - CORS_ALLOWED_ORIGINS
 
 For production-like runs also set:
