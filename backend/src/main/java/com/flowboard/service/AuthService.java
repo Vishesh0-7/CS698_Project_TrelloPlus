@@ -9,12 +9,20 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Service
 @RequiredArgsConstructor
 public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JWTService jwtService;
+    private final SecurityQuestionService securityQuestionService;
+    private final ConcurrentHashMap<String, PasswordResetSession> resetSessions = new ConcurrentHashMap<>();
 
     public AuthResponse register(RegisterRequest request) {
         String email = normalizeEmail(request.getEmail());
@@ -153,6 +161,139 @@ public class AuthService {
             if (!nameToken.isEmpty() && passwordLower.contains(nameToken)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must not contain full name");
             }
+        }
+    }
+
+    public void setSecurityQuestions(String userId, SetSecurityQuestionsRequest request) {
+        User user = getUserById(userId);
+
+        user.setSecurityQuestion1(request.getSecurityQuestion1());
+        user.setSecurityAnswer1Hash(passwordEncoder.encode(securityQuestionService.normalizeAnswer(request.getSecurityAnswer1())));
+
+        user.setSecurityQuestion2(request.getSecurityQuestion2());
+        user.setSecurityAnswer2Hash(passwordEncoder.encode(securityQuestionService.normalizeAnswer(request.getSecurityAnswer2())));
+
+        user.setCustomSecurityQuestion(request.getCustomSecurityQuestion());
+        user.setCustomSecurityAnswerHash(passwordEncoder.encode(securityQuestionService.normalizeAnswer(request.getCustomSecurityAnswer())));
+
+        user.setFailedSecurityAttempts(0);
+        user.setLastSecurityAttemptTime(null);
+
+        userRepository.save(user);
+    }
+
+    public Map<String, Object> getSecurityQuestionsForUser(String email) {
+        String normalizedEmail = normalizeEmail(email);
+        User user = userRepository.findByEmail(normalizedEmail)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (user.getSecurityQuestion1() == null || user.getSecurityQuestion2() == null || user.getCustomSecurityQuestion() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Security questions not configured for this account");
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("question1", user.getSecurityQuestion1());
+        response.put("question2", user.getSecurityQuestion2());
+        response.put("customQuestion", user.getCustomSecurityQuestion());
+
+        return response;
+    }
+
+    public PasswordResetTokenResponse validateSecurityAnswers(ValidateSecurityAnswersRequest request) {
+        String normalizedEmail = normalizeEmail(request.getEmail());
+        User user = userRepository.findByEmail(normalizedEmail)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (securityQuestionService.isRateLimited(user.getFailedSecurityAttempts(), user.getLastSecurityAttemptTime())) {
+            LocalDateTime resetTime = securityQuestionService.getRateLimitResetTime(user.getLastSecurityAttemptTime());
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, 
+                "Too many failed attempts. Please try again after " + resetTime);
+        }
+
+        Map<String, String> answers = request.getAnswers();
+        if (answers == null || answers.size() != 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "All three answers are required");
+        }
+
+        String answer1 = answers.get("answer1");
+        String answer2 = answers.get("answer2");
+        String customAnswer = answers.get("customAnswer");
+
+        if (answer1 == null || answer2 == null || customAnswer == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "All three answers are required");
+        }
+
+        String normalizedAnswer1 = securityQuestionService.normalizeAnswer(answer1);
+        String normalizedAnswer2 = securityQuestionService.normalizeAnswer(answer2);
+        String normalizedCustomAnswer = securityQuestionService.normalizeAnswer(customAnswer);
+
+        boolean isAnswer1Correct = passwordEncoder.matches(normalizedAnswer1, user.getSecurityAnswer1Hash());
+        boolean isAnswer2Correct = passwordEncoder.matches(normalizedAnswer2, user.getSecurityAnswer2Hash());
+        boolean isCustomAnswerCorrect = passwordEncoder.matches(normalizedCustomAnswer, user.getCustomSecurityAnswerHash());
+
+        if (!isAnswer1Correct || !isAnswer2Correct || !isCustomAnswerCorrect) {
+            user.setFailedSecurityAttempts(user.getFailedSecurityAttempts() + 1);
+            user.setLastSecurityAttemptTime(LocalDateTime.now());
+            userRepository.save(user);
+
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "One or more answers are incorrect");
+        }
+
+        user.setFailedSecurityAttempts(0);
+        user.setLastSecurityAttemptTime(null);
+        userRepository.save(user);
+
+        String resetToken = generateResetToken(user.getId().toString());
+        return PasswordResetTokenResponse.builder()
+            .resetToken(resetToken)
+            .message("Security questions verified. You can now reset your password.")
+            .build();
+    }
+
+    public void resetPasswordWithToken(ResetPasswordRequest request) {
+        String userId = validateResetToken(request.getResetToken());
+        User user = getUserById(userId);
+
+        validatePasswordBusinessRules(request.getNewPassword(), user.getEmail(), user.getFullName());
+
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        userRepository.save(user);
+
+        invalidateResetToken(request.getResetToken());
+    }
+
+    private String generateResetToken(String userId) {
+        String token = java.util.UUID.randomUUID().toString();
+        PasswordResetSession session = new PasswordResetSession(userId, LocalDateTime.now().plusHours(1));
+        resetSessions.put(token, session);
+        return token;
+    }
+
+    private String validateResetToken(String token) {
+        PasswordResetSession session = resetSessions.get(token);
+        if (session == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired reset token");
+        }
+
+        if (LocalDateTime.now().isAfter(session.expiresAt)) {
+            resetSessions.remove(token);
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Reset token has expired");
+        }
+
+        return session.userId;
+    }
+
+    private void invalidateResetToken(String token) {
+        resetSessions.remove(token);
+    }
+
+    private static class PasswordResetSession {
+        String userId;
+        LocalDateTime expiresAt;
+
+        PasswordResetSession(String userId, LocalDateTime expiresAt) {
+            this.userId = userId;
+            this.expiresAt = expiresAt;
         }
     }
 }

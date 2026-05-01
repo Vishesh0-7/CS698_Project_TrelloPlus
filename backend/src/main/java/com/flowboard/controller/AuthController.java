@@ -1,10 +1,6 @@
 package com.flowboard.controller;
 
-import com.flowboard.dto.AuthResponse;
-import com.flowboard.dto.LoginRequest;
-import com.flowboard.dto.RegisterRequest;
-import com.flowboard.dto.UpdateUserProfileRequest;
-import com.flowboard.dto.UserDTO;
+import com.flowboard.dto.*;
 import com.flowboard.service.AuthService;
 import com.flowboard.service.JWTService;
 import com.flowboard.service.RateLimitService;
@@ -107,5 +103,39 @@ public class AuthController {
         @Valid @RequestBody UpdateUserProfileRequest request) {
         UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
         return ResponseEntity.ok(authService.updateUserProfile(userId.toString(), request));
+    }
+
+    @PostMapping("/security-questions")
+    public ResponseEntity<Void> setSecurityQuestions(
+        @RequestHeader("Authorization") String authHeader,
+        @Valid @RequestBody SetSecurityQuestionsRequest request) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        authService.setSecurityQuestions(userId.toString(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/security-questions/{email}")
+    public ResponseEntity<java.util.Map<String, Object>> getSecurityQuestions(@PathVariable String email) {
+        return ResponseEntity.ok(authService.getSecurityQuestionsForUser(email));
+    }
+
+    @PostMapping("/forgot-password/validate")
+    public ResponseEntity<PasswordResetTokenResponse> validateSecurityAnswers(
+        @Valid @RequestBody ValidateSecurityAnswersRequest request,
+        HttpServletRequest httpRequest) {
+        rateLimitService.check(
+            "forgot-password:ip:" + httpRequest.getRemoteAddr(),
+            5,
+            Duration.ofMinutes(15),
+            "Too many password reset attempts. Please try again later."
+        );
+        return ResponseEntity.ok(authService.validateSecurityAnswers(request));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPassword(
+        @Valid @RequestBody ResetPasswordRequest request) {
+        authService.resetPasswordWithToken(request);
+        return ResponseEntity.noContent().build();
     }
 }

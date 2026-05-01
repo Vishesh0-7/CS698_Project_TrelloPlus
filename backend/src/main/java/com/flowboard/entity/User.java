@@ -52,6 +52,30 @@ public class User {
 
     private LocalDateTime deletedAt;
 
+    @Column(nullable = true)
+    private String securityQuestion1;
+
+    @Column(nullable = true, length = 500)
+    private String securityAnswer1Hash;
+
+    @Column(nullable = true)
+    private String securityQuestion2;
+
+    @Column(nullable = true, length = 500)
+    private String securityAnswer2Hash;
+
+    @Column(nullable = true, length = 500)
+    private String customSecurityQuestion;
+
+    @Column(nullable = true, length = 500)
+    private String customSecurityAnswerHash;
+
+    @Column(name = "failed_security_attempts", columnDefinition = "int default 0")
+    private Integer failedSecurityAttempts = 0;
+
+    @Column(name = "last_security_attempt_time")
+    private LocalDateTime lastSecurityAttemptTime;
+
     @ManyToMany(mappedBy = "members", fetch = FetchType.EAGER)
     private Set<Project> projects = new HashSet<>();
 
