@@ -96,6 +96,11 @@ export function Login() {
                 className="mt-0"
                 disabled={isLoading}
               />
+              <div className="mt-2 text-right">
+                <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
