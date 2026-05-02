@@ -290,6 +290,14 @@ const parseErrorMessage = async (response: Response, fallback: string): Promise<
 
 const parseApiErrorMessage = async (response: Response, fallback: string): Promise<string> => {
   if (response.status === 401) {
+    const errorMessage = await parseErrorMessage(response, '');
+    
+    // Check if this is a password validation error (don't log out user)
+    if (errorMessage.toLowerCase().includes('password') || errorMessage.toLowerCase().includes('incorrect')) {
+      return errorMessage || 'Incorrect password. Please try again.';
+    }
+    
+    // Otherwise, it's a session expiration - log user out
     localStorage.removeItem('authToken');
     localStorage.removeItem('user');
     return 'Session expired. Please sign in again.';
