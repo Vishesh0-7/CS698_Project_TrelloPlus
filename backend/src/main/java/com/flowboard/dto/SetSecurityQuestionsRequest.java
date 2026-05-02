@@ -11,6 +11,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @Builder
 public class SetSecurityQuestionsRequest {
+    private String currentPassword;
+
     @NotBlank(message = "Security question 1 is required")
     private String securityQuestion1;
 

@@ -43,6 +43,7 @@ interface AuthResponse {
 }
 
 interface SetSecurityQuestionsRequest {
+  currentPassword?: string;
   securityQuestion1: string;
   securityAnswer1: string;
   securityQuestion2: string;
@@ -441,6 +442,19 @@ export const apiService = {
     return response.json();
   },
 
+  async getMySecurityQuestions(): Promise<SecurityQuestionsResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/security-questions/me`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Security questions are not configured. Please contact support or log in to configure them.'));
+    }
+
+    return response.json();
+  },
+
   async validateSecurityAnswers(request: ValidateSecurityAnswersRequest): Promise<PasswordResetTokenResponse> {
     const response = await requestWithTimeout(`${API_BASE_URL}/auth/forgot-password/validate`, {
       method: 'POST',
@@ -641,7 +655,7 @@ export const apiService = {
     return response.json();
   },
 
-  async updateUserProfile(request: { fullName: string; email: string }): Promise<any> {
+  async updateUserProfile(request: { fullName: string }): Promise<any> {
     const response = await requestWithTimeout(`${API_BASE_URL}/auth/profile`, {
       method: 'PUT',
       headers: getAuthHeaders(),

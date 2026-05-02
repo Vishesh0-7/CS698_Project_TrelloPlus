@@ -39,7 +39,7 @@ public class CustomUserDetailsService implements UserDetailsService {
     @Override
     @Transactional(readOnly = true)
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        var user = userRepository.findByEmail(email)
+        var user = userRepository.findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(email)
             .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
 
         return buildUserDetails(user);

@@ -85,7 +85,7 @@ public class AuthService {
 
     public AuthResponse login(LoginRequest request) {
         String email = normalizeEmail(request.getEmail());
-        User user = userRepository.findByEmail(email)
+        User user = userRepository.findFirstByEmailOrderByCreatedAtDesc(email)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
@@ -116,15 +116,6 @@ public class AuthService {
         
         if (request.getFullName() != null && !request.getFullName().isBlank()) {
             user.setFullName(request.getFullName().trim());
-        }
-        
-        if (request.getEmail() != null && !request.getEmail().isBlank()) {
-            String normalizedEmail = normalizeEmail(request.getEmail());
-            // Check if email is already taken by another user
-            if (userRepository.existsByEmailAndIdNot(normalizedEmail, user.getId())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already exists");
-            }
-            user.setEmail(normalizedEmail);
         }
         
         user = userRepository.save(user);
@@ -167,6 +158,16 @@ public class AuthService {
     public void setSecurityQuestions(String userId, SetSecurityQuestionsRequest request) {
         User user = getUserById(userId);
 
+        if (hasConfiguredSecurityQuestions(user)) {
+            if (request.getCurrentPassword() == null || request.getCurrentPassword().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Current password is required to update security questions");
+            }
+
+            if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Current password is incorrect");
+            }
+        }
+
         user.setSecurityQuestion1(request.getSecurityQuestion1());
         user.setSecurityAnswer1Hash(passwordEncoder.encode(securityQuestionService.normalizeAnswer(request.getSecurityAnswer1())));
 
@@ -182,15 +183,38 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    public Map<String, Object> getSecurityQuestionsForUser(String email) {
-        String normalizedEmail = normalizeEmail(email);
-        User user = userRepository.findByEmail(normalizedEmail)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+    private boolean hasConfiguredSecurityQuestions(User user) {
+        return user.getSecurityQuestion1() != null
+            && user.getSecurityAnswer1Hash() != null
+            && user.getSecurityQuestion2() != null
+            && user.getSecurityAnswer2Hash() != null
+            && user.getCustomSecurityQuestion() != null
+            && user.getCustomSecurityAnswerHash() != null;
+    }
 
-        if (user.getSecurityQuestion1() == null || user.getSecurityQuestion2() == null || user.getCustomSecurityQuestion() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Security questions not configured for this account");
+    public Map<String, Object> getSecurityQuestionsForUserId(String userId) {
+        User user = getUserById(userId);
+
+        if (!hasConfiguredSecurityQuestions(user)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Security questions are not configured. Please contact support or log in to configure them.");
         }
 
+        return toSecurityQuestionsResponse(user);
+    }
+
+    public Map<String, Object> getSecurityQuestionsForUser(String email) {
+        String normalizedEmail = normalizeEmail(email);
+        User user = userRepository.findFirstByEmailOrderByCreatedAtDesc(normalizedEmail)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (!hasConfiguredSecurityQuestions(user)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Security questions are not configured. Please contact support or log in to configure them.");
+        }
+
+        return toSecurityQuestionsResponse(user);
+    }
+
+    private Map<String, Object> toSecurityQuestionsResponse(User user) {
         Map<String, Object> response = new HashMap<>();
         response.put("question1", user.getSecurityQuestion1());
         response.put("question2", user.getSecurityQuestion2());
@@ -201,8 +225,14 @@ public class AuthService {
 
     public PasswordResetTokenResponse validateSecurityAnswers(ValidateSecurityAnswersRequest request) {
         String normalizedEmail = normalizeEmail(request.getEmail());
-        User user = userRepository.findByEmail(normalizedEmail)
+        User user = userRepository.findFirstByEmailOrderByCreatedAtDesc(normalizedEmail)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (user.getSecurityAnswer1Hash() == null
+            || user.getSecurityAnswer2Hash() == null
+            || user.getCustomSecurityAnswerHash() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Security questions are not configured. Please contact support or log in to configure them.");
+        }
 
         if (securityQuestionService.isRateLimited(user.getFailedSecurityAttempts(), user.getLastSecurityAttemptTime())) {
             LocalDateTime resetTime = securityQuestionService.getRateLimitResetTime(user.getLastSecurityAttemptTime());
@@ -232,7 +262,8 @@ public class AuthService {
         boolean isCustomAnswerCorrect = passwordEncoder.matches(normalizedCustomAnswer, user.getCustomSecurityAnswerHash());
 
         if (!isAnswer1Correct || !isAnswer2Correct || !isCustomAnswerCorrect) {
-            user.setFailedSecurityAttempts(user.getFailedSecurityAttempts() + 1);
+            int failedAttempts = user.getFailedSecurityAttempts() == null ? 0 : user.getFailedSecurityAttempts();
+            user.setFailedSecurityAttempts(failedAttempts + 1);
             user.setLastSecurityAttemptTime(LocalDateTime.now());
             userRepository.save(user);
 

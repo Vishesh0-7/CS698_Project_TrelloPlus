@@ -52,22 +52,22 @@ public class User {
 
     private LocalDateTime deletedAt;
 
-    @Column(nullable = true)
+    @Column(name = "security_question1", nullable = true)
     private String securityQuestion1;
 
-    @Column(nullable = true, length = 500)
+    @Column(name = "security_answer1_hash", nullable = true, length = 500)
     private String securityAnswer1Hash;
 
-    @Column(nullable = true)
+    @Column(name = "security_question2", nullable = true)
     private String securityQuestion2;
 
-    @Column(nullable = true, length = 500)
+    @Column(name = "security_answer2_hash", nullable = true, length = 500)
     private String securityAnswer2Hash;
 
-    @Column(nullable = true, length = 500)
+    @Column(name = "custom_security_question", nullable = true, length = 500)
     private String customSecurityQuestion;
 
-    @Column(nullable = true, length = 500)
+    @Column(name = "custom_security_answer_hash", nullable = true, length = 500)
     private String customSecurityAnswerHash;
 
     @Column(name = "failed_security_attempts", columnDefinition = "int default 0")
