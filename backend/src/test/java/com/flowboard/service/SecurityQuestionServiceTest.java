@@ -224,6 +224,30 @@ class SecurityQuestionServiceTest {
     }
 
     @Test
+    void testNormalizeAnswerVeryLongStringPerformance() {
+        // Test with 500 character answer (max allowed)
+        String longAnswer = "a".repeat(500);
+        String result = securityQuestionService.normalizeAnswer(longAnswer);
+        assertEquals(500, result.length());
+    }
+
+    @Test
+    void testNormalizeAnswerUnicodeAndAccents() {
+        // Test Unicode characters with accents are normalized away
+        // "José" -> "jos" (accent removed from e, é becomes nothing in regex)
+        // "café" -> "caf" (accent removed from e)
+        assertEquals("jos", securityQuestionService.normalizeAnswer("José"));
+        assertEquals("caf", securityQuestionService.normalizeAnswer("café"));
+    }
+
+    @Test
+    void testNormalizeAnswerTabsAndNewlines() {
+        // Test that tabs and newlines are normalized to spaces
+        assertEquals("a b c", securityQuestionService.normalizeAnswer("a\tb\nc"));
+        assertEquals("hello world", securityQuestionService.normalizeAnswer("hello\n\nworld"));
+    }
+
+    @Test
     void testMaxFailedAttemptsConstant() {
         int maxAttempts = securityQuestionService.getMaxFailedAttempts();
         assertEquals(3, maxAttempts);

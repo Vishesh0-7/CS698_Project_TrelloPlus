@@ -175,6 +175,7 @@ export function SecurityQuestionsSetup(props: SecurityQuestionsSetupProps) {
           <Label htmlFor="system-q1" className="block mb-3 font-semibold text-gray-900">
             System Question 1 <span className="text-red-500">*</span>
           </Label>
+          <p className="text-xs text-gray-500 mb-2">Answers are case-insensitive and special characters are removed.</p>
           <select
             id="system-q1"
             value={selectedQ1}
@@ -195,6 +196,7 @@ export function SecurityQuestionsSetup(props: SecurityQuestionsSetupProps) {
             value={answer1}
             onChange={(e) => setAnswer1(e.target.value)}
             disabled={isLoading || !selectedQ1}
+            maxLength={500}
             className="mt-2"
           />
         </div>
@@ -224,6 +226,7 @@ export function SecurityQuestionsSetup(props: SecurityQuestionsSetupProps) {
             value={answer2}
             onChange={(e) => setAnswer2(e.target.value)}
             disabled={isLoading || !selectedQ2}
+            maxLength={500}
             className="mt-2"
           />
         </div>
@@ -250,6 +253,7 @@ export function SecurityQuestionsSetup(props: SecurityQuestionsSetupProps) {
             value={customAnswer}
             onChange={(e) => setCustomAnswer(e.target.value)}
             disabled={isLoading}
+            maxLength={500}
           />
         </div>
 

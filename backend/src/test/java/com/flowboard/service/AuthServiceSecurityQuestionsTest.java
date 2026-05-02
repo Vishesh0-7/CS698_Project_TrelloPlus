@@ -2,6 +2,7 @@ package com.flowboard.service;
 
 import com.flowboard.dto.SetSecurityQuestionsRequest;
 import com.flowboard.dto.ValidateSecurityAnswersRequest;
+import com.flowboard.dto.PasswordResetTokenResponse;
 import com.flowboard.entity.User;
 import com.flowboard.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +19,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -143,6 +146,68 @@ class AuthServiceSecurityQuestionsTest {
             "Security questions are not configured. Please contact support or log in to configure them.",
             ex.getReason()
         );
+    }
+
+    @Test
+    void validateSecurityAnswers_correctAnswersCreateResetToken() {
+        User user = configuredUser();
+        when(userRepository.findFirstByEmailOrderByCreatedAtDesc("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("ada", user.getSecurityAnswer1Hash())).thenReturn(true);
+        when(passwordEncoder.matches("intern", user.getSecurityAnswer2Hash())).thenReturn(true);
+        when(passwordEncoder.matches("blue", user.getCustomSecurityAnswerHash())).thenReturn(true);
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ValidateSecurityAnswersRequest request = ValidateSecurityAnswersRequest.builder()
+            .email("user@example.com")
+            .answers(Map.of("answer1", "Ada", "answer2", "Intern", "customAnswer", "Blue"))
+            .build();
+
+        PasswordResetTokenResponse response = authService.validateSecurityAnswers(request);
+
+        assertNotNull(response.getResetToken());
+        assertEquals("Security questions verified. You can now reset your password.", response.getMessage());
+        verify(userRepository).save(any(User.class));
+    }
+
+    @Test
+    void validateSecurityAnswers_incorrectAnswersIncrementsFailedAttempts() {
+        User user = configuredUser();
+        when(userRepository.findFirstByEmailOrderByCreatedAtDesc("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", user.getSecurityAnswer1Hash())).thenReturn(false);
+        when(passwordEncoder.matches("wrong", user.getSecurityAnswer2Hash())).thenReturn(false);
+        when(passwordEncoder.matches("wrong", user.getCustomSecurityAnswerHash())).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ValidateSecurityAnswersRequest request = ValidateSecurityAnswersRequest.builder()
+            .email("user@example.com")
+            .answers(Map.of("answer1", "wrong", "answer2", "wrong", "customAnswer", "wrong"))
+            .build();
+
+        ResponseStatusException ex = assertThrows(
+            ResponseStatusException.class,
+            () -> authService.validateSecurityAnswers(request)
+        );
+
+        assertEquals(HttpStatus.UNAUTHORIZED, ex.getStatusCode());
+        verify(userRepository).save(argThat(u -> u.getFailedSecurityAttempts() == 1));
+    }
+
+    @Test
+    void setSecurityQuestions_resetFailedAttemptsOnUpdate() {
+        User user = baseUser();
+        user.setFailedSecurityAttempts(3);
+        user.setLastSecurityAttemptTime(java.time.LocalDateTime.now());
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(passwordEncoder.encode(any(String.class))).thenAnswer(invocation -> "hash:" + invocation.getArgument(0));
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.setSecurityQuestions(userId.toString(), request(null));
+
+        verify(userRepository).save(argThat(u -> 
+            u.getFailedSecurityAttempts() == 0 && 
+            u.getLastSecurityAttemptTime() == null
+        ));
     }
 
     private SetSecurityQuestionsRequest request(String currentPassword) {
