@@ -96,11 +96,15 @@ export function Login() {
                 className="mt-0"
                 disabled={isLoading}
               />
-              <div className="mt-2 text-right">
-                <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                  Forgot password? Reset here
-                </Link>
-              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="mt-2 w-full justify-end px-0 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-transparent"
+                onClick={() => navigate('/forgot-password')}
+                disabled={isLoading}
+              >
+                Forgot password?
+              </Button>
             </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
