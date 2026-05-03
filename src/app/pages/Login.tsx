@@ -98,7 +98,7 @@ export function Login() {
               />
               <div className="mt-2 text-right">
                 <Link to="/forgot-password" className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                  Forgot password?
+                  Forgot password? Reset here
                 </Link>
               </div>
             </div>
