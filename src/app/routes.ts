@@ -9,6 +9,7 @@ import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Logout } from "./pages/Logout";
+import { ForgotPassword } from "./pages/ForgotPassword";
 import { Meetings } from "./pages/Meetings";
 import { MeetingSummary } from "./pages/MeetingSummary";
 import { CreateMeeting } from "./pages/CreateMeeting";
@@ -37,6 +38,10 @@ export const router = createBrowserRouter([
   {
     path: "/register",
     Component: Register,
+  },
+  {
+    path: "/forgot-password",
+    Component: ForgotPassword,
   },
   {
     path: "/logout",

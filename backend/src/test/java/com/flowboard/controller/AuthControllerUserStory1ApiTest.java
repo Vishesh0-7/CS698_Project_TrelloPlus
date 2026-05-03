@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +26,7 @@ import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -147,6 +149,54 @@ class AuthControllerUserStory1ApiTest {
 
         verify(jwtService).extractBearerToken("Bearer valid-token");
         verify(authService).logout("valid-token");
+    }
+
+    @Test
+    void getMySecurityQuestions_returnsConfiguredQuestionsForAuthenticatedUser() throws Exception {
+        UUID userId = UUID.randomUUID();
+        when(jwtService.extractUserIdFromAuthHeader("Bearer valid-token")).thenReturn(userId);
+        when(authService.getSecurityQuestionsForUserId(userId.toString())).thenReturn(Map.of(
+            "question1", "Question one?",
+            "question2", "Question two?",
+            "customQuestion", "Custom question?"
+        ));
+
+        mockMvc.perform(get("/auth/security-questions/me")
+                .header("Authorization", "Bearer valid-token"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.question1").value("Question one?"))
+            .andExpect(jsonPath("$.question2").value("Question two?"))
+            .andExpect(jsonPath("$.customQuestion").value("Custom question?"));
+
+        verify(jwtService).extractUserIdFromAuthHeader("Bearer valid-token");
+        verify(authService).getSecurityQuestionsForUserId(userId.toString());
+    }
+
+    @Test
+    void getSecurityQuestionsByEmail_appliesIpAndEmailRateLimits() throws Exception {
+        when(authService.getSecurityQuestionsForUser("user@example.com")).thenReturn(Map.of(
+            "question1", "Question one?",
+            "question2", "Question two?",
+            "customQuestion", "Custom question?"
+        ));
+
+        mockMvc.perform(get("/auth/security-questions/user@example.com"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.question1").value("Question one?"));
+
+        verify(rateLimitService).check(
+            startsWith("security-questions:lookup:ip:"),
+            eq(10),
+            eq(Duration.ofMinutes(15)),
+            eq("Too many password recovery lookups. Please wait and try again later.")
+        );
+        verify(rateLimitService).check(
+            eq("security-questions:lookup:email:user@example.com"),
+            eq(10),
+            eq(Duration.ofMinutes(15)),
+            eq("Too many password recovery lookups for this account. Please wait and try again later.")
+        );
+        verify(authService).getSecurityQuestionsForUser("user@example.com");
     }
 
     @Test

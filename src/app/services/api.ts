@@ -42,6 +42,41 @@ interface AuthResponse {
   };
 }
 
+interface SetSecurityQuestionsRequest {
+  currentPassword?: string;
+  securityQuestion1: string;
+  securityAnswer1: string;
+  securityQuestion2: string;
+  securityAnswer2: string;
+  customSecurityQuestion: string;
+  customSecurityAnswer: string;
+}
+
+interface SecurityQuestionsResponse {
+  question1: string;
+  question2: string;
+  customQuestion: string;
+}
+
+interface ValidateSecurityAnswersRequest {
+  email: string;
+  answers: {
+    answer1: string;
+    answer2: string;
+    customAnswer: string;
+  };
+}
+
+interface PasswordResetTokenResponse {
+  resetToken: string;
+  message: string;
+}
+
+interface ResetPasswordRequest {
+  resetToken: string;
+  newPassword: string;
+}
+
 interface CreateProjectRequest {
   name: string;
   description: string;
@@ -255,6 +290,14 @@ const parseErrorMessage = async (response: Response, fallback: string): Promise<
 
 const parseApiErrorMessage = async (response: Response, fallback: string): Promise<string> => {
   if (response.status === 401) {
+    const errorMessage = await parseErrorMessage(response, '');
+    
+    // Check if this is a password validation error (don't log out user)
+    if (errorMessage.toLowerCase().includes('password') || errorMessage.toLowerCase().includes('incorrect')) {
+      return errorMessage || 'Incorrect password. Please try again.';
+    }
+    
+    // Otherwise, it's a session expiration - log user out
     localStorage.removeItem('authToken');
     localStorage.removeItem('user');
     return 'Session expired. Please sign in again.';
@@ -379,6 +422,70 @@ export const apiService = {
 
     if (!response.ok && response.status !== 401) {
       throw new Error(await parseApiErrorMessage(response, 'Logout failed'));
+    }
+  },
+
+  async setSecurityQuestions(request: SetSecurityQuestionsRequest): Promise<void> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/security-questions`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Failed to save security questions'));
+    }
+  },
+
+  async getSecurityQuestions(email: string): Promise<SecurityQuestionsResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/security-questions/${encodeURIComponent(email)}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response, 'Account not found'));
+    }
+
+    return response.json();
+  },
+
+  async getMySecurityQuestions(): Promise<SecurityQuestionsResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/security-questions/me`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseApiErrorMessage(response, 'Security questions are not configured. Please contact support or log in to configure them.'));
+    }
+
+    return response.json();
+  },
+
+  async validateSecurityAnswers(request: ValidateSecurityAnswersRequest): Promise<PasswordResetTokenResponse> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/forgot-password/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response, 'Security answer validation failed'));
+    }
+
+    return response.json();
+  },
+
+  async resetPassword(request: ResetPasswordRequest): Promise<void> {
+    const response = await requestWithTimeout(`${API_BASE_URL}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(await parseErrorMessage(response, 'Password reset failed'));
     }
   },
 
@@ -556,7 +663,7 @@ export const apiService = {
     return response.json();
   },
 
-  async updateUserProfile(request: { fullName: string; email: string }): Promise<any> {
+  async updateUserProfile(request: { fullName: string }): Promise<any> {
     const response = await requestWithTimeout(`${API_BASE_URL}/auth/profile`, {
       method: 'PUT',
       headers: getAuthHeaders(),

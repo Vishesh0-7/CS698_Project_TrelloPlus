@@ -418,6 +418,12 @@ async function test_INT_001_IT_01(browser) {
     // Assertions
     const registerResponse = await registerResponsePromise;
     assert(registerResponse.ok(), `Expected 2xx register response, got ${registerResponse.status()}`);
+
+    const skipSecurityQuestions = page.getByRole('button', { name: 'Skip for now' });
+    if (await skipSecurityQuestions.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await skipSecurityQuestions.click();
+    }
+
     await page.waitForURL((url) => !url.pathname.includes('/register'), { timeout: 45000 });
 
     const token = await page.evaluate(() => localStorage.getItem('authToken'));
