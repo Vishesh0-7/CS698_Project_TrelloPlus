@@ -23,7 +23,6 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/meetings")
 @RequiredArgsConstructor
-@CrossOrigin(originPatterns = "http://localhost:*")
 public class MeetingController {
     private final MeetingService meetingService;
     private final JWTService jwtService;

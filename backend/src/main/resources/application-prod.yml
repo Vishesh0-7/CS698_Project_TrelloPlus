@@ -20,7 +20,8 @@ logging:
     org.springframework.security: ${SECURITY_LOG_LEVEL:WARN}
 
 ai:
-  ollama:
-    base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
-    model: ${OLLAMA_MODEL:qwen2.5:7b}
-    timeout-seconds: ${OLLAMA_TIMEOUT_SECONDS:30}
+  bedrock:
+    region: ${BEDROCK_REGION:us-east-2}
+    model-id: ${BEDROCK_MODEL_ID:amazon.nova-micro-v1:0}
+    timeout-seconds: ${BEDROCK_TIMEOUT_SECONDS:30}
+    max-tokens: ${BEDROCK_MAX_TOKENS:2048}

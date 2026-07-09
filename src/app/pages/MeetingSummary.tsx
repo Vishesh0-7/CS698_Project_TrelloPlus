@@ -24,7 +24,7 @@ import {
   type MeetingSummaryResponse,
   type ApprovalStatusResponse,
 } from '../services/api';
-import { formatMeetingDate, formatMeetingTime } from '../utils/meetingDateTime';
+import { formatMeetingDateLocal, formatMeetingTimeLocal } from '../utils/timezoneUtils';
 
 const statusConfig: Record<string, { label: string; color: string }> = {
   SCHEDULED: { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -54,7 +54,6 @@ export function MeetingSummary() {
   const [actionPriority, setActionPriority] = useState('MEDIUM');
   const [decisionDescription, setDecisionDescription] = useState('');
   const [decisionSourceContext, setDecisionSourceContext] = useState('');
-  const [decisionImpactSummary, setDecisionImpactSummary] = useState('');
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
@@ -234,7 +233,6 @@ export function MeetingSummary() {
     setShowDecisionEditor(false);
     setDecisionDescription('');
     setDecisionSourceContext('');
-    setDecisionImpactSummary('');
   };
 
   const saveActionItem = async () => {
@@ -285,12 +283,10 @@ export function MeetingSummary() {
         ? await apiService.updateDecision(editingDecisionId, {
             description: decisionDescription.trim(),
             sourceContext: decisionSourceContext.trim() || undefined,
-            impactSummary: decisionImpactSummary.trim() || undefined,
           })
         : await apiService.addDecision(meetingId, {
             description: decisionDescription.trim(),
             sourceContext: decisionSourceContext.trim() || undefined,
-            impactSummary: decisionImpactSummary.trim() || undefined,
           });
       setSummary(nextSummary);
       resetDecisionEditor();
@@ -342,8 +338,8 @@ export function MeetingSummary() {
               <h1 className="text-2xl font-bold text-gray-900">{meeting.title}</h1>
               <p className="text-sm text-gray-600 mt-1">Project: {meeting.projectName || 'N/A'}</p>
               <div className="flex items-center gap-4 text-sm text-gray-600 mt-2">
-                <div className="flex items-center gap-1"><Calendar className="w-4 h-4" />{formatMeetingDate(meeting.meetingDate)}</div>
-                <div className="flex items-center gap-1"><Clock className="w-4 h-4" />{formatMeetingTime(meeting.meetingTime)}</div>
+                <div className="flex items-center gap-1"><Calendar className="w-4 h-4" />{formatMeetingDateLocal(meeting.meetingDate)}</div>
+                <div className="flex items-center gap-1"><Clock className="w-4 h-4" />{formatMeetingTimeLocal(meeting.meetingDate, meeting.meetingTime)}</div>
               </div>
             </div>
             <Badge variant="outline" className={statusInfo.color}>{statusInfo.label}</Badge>
@@ -362,7 +358,6 @@ export function MeetingSummary() {
                   setEditingDecisionId(null);
                   setDecisionDescription('');
                   setDecisionSourceContext('');
-                  setDecisionImpactSummary('');
                   setShowDecisionEditor(true);
                 }}
               >
@@ -373,7 +368,6 @@ export function MeetingSummary() {
               <div className="mb-3 border rounded-lg p-3 bg-gray-50 space-y-2">
                 <Input placeholder="Decision description" value={decisionDescription} onChange={(e) => setDecisionDescription(e.target.value)} />
                 <Input placeholder="Source context (optional)" value={decisionSourceContext} onChange={(e) => setDecisionSourceContext(e.target.value)} />
-                <Input placeholder="Impact summary (optional)" value={decisionImpactSummary} onChange={(e) => setDecisionImpactSummary(e.target.value)} />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={saveDecisionItem} disabled={isSavingItem || !decisionDescription.trim() || isAddDisabled}>Save</Button>
                   <Button size="sm" variant="outline" onClick={resetDecisionEditor}>Cancel</Button>
@@ -404,7 +398,6 @@ export function MeetingSummary() {
                         setEditingDecisionId(d.id);
                         setDecisionDescription(d.description || '');
                         setDecisionSourceContext(d.sourceContext || '');
-                        setDecisionImpactSummary('');
                         setShowDecisionEditor(true);
                       }}
                     >

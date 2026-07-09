@@ -26,7 +26,8 @@ import {
 import { Calendar, Clock, Plus, FileText, ListChecks, Video, ExternalLink } from 'lucide-react';
 import { apiService, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
-import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
+import { formatMeetingDateLocal, formatMeetingTimeLocal, convertLocalToUTC, convertBackendDateTimeToLocal } from '../utils/timezoneUtils';
+import { getMeetingSortValue } from '../utils/meetingDateTime';
 
 const statusConfig = {
   'scheduled': { label: 'Scheduled', color: 'bg-blue-50 text-blue-700 border-blue-200' },
@@ -153,8 +154,26 @@ export function Meetings() {
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {
     setRescheduleMeeting(meeting);
-    setRescheduleDate(meeting.meetingDate);
-    setRescheduleTime((meeting.meetingTime || '').slice(0, 5));
+    try {
+      // Convert UTC time back to local timezone for display
+      // Handle both array format from backend and string format
+      const { date, time } = convertBackendDateTimeToLocal(meeting.meetingDate, meeting.meetingTime);
+      setRescheduleDate(date);
+      setRescheduleTime(time);
+    } catch (error) {
+      console.error('Error converting meeting time:', error);
+      // Fallback to raw values if conversion fails
+      setRescheduleDate(
+        Array.isArray(meeting.meetingDate)
+          ? `${meeting.meetingDate[0]}-${String(meeting.meetingDate[1]).padStart(2, '0')}-${String(meeting.meetingDate[2]).padStart(2, '0')}`
+          : String(meeting.meetingDate)
+      );
+      setRescheduleTime(
+        Array.isArray(meeting.meetingTime)
+          ? `${String(meeting.meetingTime[0]).padStart(2, '0')}:${String(meeting.meetingTime[1]).padStart(2, '0')}`
+          : (meeting.meetingTime || '').slice(0, 5)
+      );
+    }
   };
 
   const handleRescheduleMeeting = async () => {
@@ -165,11 +184,19 @@ export function Meetings() {
 
     setIsUpdatingMeeting(true);
     try {
+      // Convert local time to UTC for storage
+      const utcIsoString = convertLocalToUTC(rescheduleDate, rescheduleTime);
+      const utcDate = new Date(utcIsoString);
+
+      // Extract UTC date and time components
+      const utcDateStr = utcDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const utcTimeStr = utcDate.toISOString().split('T')[1].slice(0, 8); // HH:mm:ss
+
       await apiService.updateMeeting(rescheduleMeeting.id, {
         title: rescheduleMeeting.title,
         description: rescheduleMeeting.description,
-        meetingDate: rescheduleDate,
-        meetingTime: `${rescheduleTime}:00`,
+        meetingDate: utcDateStr,
+        meetingTime: utcTimeStr,
         platform: rescheduleMeeting.platform,
         meetingLink: rescheduleMeeting.meetingLink,
       });
@@ -300,12 +327,12 @@ export function Meetings() {
                   <div className="space-y-2 mb-4">
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <Calendar className="w-4 h-4 flex-shrink-0" />
-                      <span>{formatMeetingDate(meeting.meetingDate)}</span>
+                      <span>{formatMeetingDateLocal(meeting.meetingDate)}</span>
                     </div>
                     
                     <div className="flex items-center gap-2 text-sm text-gray-600">
                       <Clock className="w-4 h-4 flex-shrink-0" />
-                      <span>{formatMeetingTime(meeting.meetingTime)}</span>
+                      <span>{formatMeetingTimeLocal(meeting.meetingDate, meeting.meetingTime)}</span>
                     </div>
 
                     {normalizedStatus === 'scheduled' && (

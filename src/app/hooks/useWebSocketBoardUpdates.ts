@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import SockJS from 'sockjs-client';
 import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
 import { useProjectStore } from '../store/projectStore';
-import { WS_ENDPOINT } from '../services/runtimeConfig';
+import { ENABLE_REALTIME, WS_ENDPOINT } from '../services/runtimeConfig';
 
 interface CardDTO {
   id: string;
@@ -27,7 +27,11 @@ interface CardDeleteEvent {
 }
 
 interface CardMoveEvent {
+  cardId: string;
   cardData: CardDTO;
+  fromStageId: string;
+  toStageId: string;
+  newPosition: number;
 }
 
 interface StageDeleteEvent {
@@ -59,9 +63,26 @@ export const useWebSocketBoardUpdates = (boardId: string | null, projectId: stri
     updateTeamMemberRole,
   } = useProjectStore();
 
+  const shouldSkipRealtime = () => {
+    if (!ENABLE_REALTIME) {
+      return true;
+    }
+
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:' && WS_ENDPOINT.startsWith('http://')) {
+      return true;
+    }
+
+    return false;
+  };
+
   useEffect(() => {
     if (!boardId) {
       console.log('[WS] No boardId, skipping websocket connection');
+      return;
+    }
+
+    if (shouldSkipRealtime()) {
+      console.warn('[WS] Realtime disabled for current runtime configuration.');
       return;
     }
 

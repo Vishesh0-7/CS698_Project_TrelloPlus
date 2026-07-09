@@ -133,3 +133,10 @@ spring-boot-build-info.properties
 bin/
 build/
 out/
+
+# Packaged archives/artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z

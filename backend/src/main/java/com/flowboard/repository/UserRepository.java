@@ -11,6 +11,8 @@ import java.util.UUID;
 public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByEmail(String email);
     Optional<User> findByEmailIgnoreCase(String email);
+    Optional<User> findFirstByEmailOrderByCreatedAtDesc(String email);
+    Optional<User> findFirstByEmailIgnoreCaseOrderByCreatedAtDesc(String email);
     Optional<User> findByUsername(String username);
     boolean existsByEmail(String email);
     boolean existsByEmailAndIdNot(String email, UUID id);

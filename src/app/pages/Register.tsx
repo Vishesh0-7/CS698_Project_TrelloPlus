@@ -6,6 +6,7 @@ import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { apiService } from '../services/api';
 import { useProjectStore } from '../store/projectStore';
+import { SecurityQuestionsSetup } from './SecurityQuestionsSetup';
 
 export function Register() {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -17,6 +18,7 @@ export function Register() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,14 +71,36 @@ export function Register() {
         role: response.user.role || 'Member',
       });
 
-      toast.success('Account created successfully!');
-      navigate('/');
+      // Show security questions setup
+      setUserId(response.user.id);
+      toast.success('Account created! Let\'s secure it with security questions.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Registration failed');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const handleSecurityQuestionsComplete = () => {
+    toast.success('Security questions saved! Redirecting to dashboard...');
+    setTimeout(() => navigate('/'), 1500);
+  };
+
+  const handleSecurityQuestionsSkip = () => {
+    toast.info('You can set up security questions later in your account settings.');
+    navigate('/');
+  };
+
+  // Show security questions setup after successful registration
+  if (userId) {
+    return (
+      <SecurityQuestionsSetup 
+        userId={userId}
+        onComplete={handleSecurityQuestionsComplete}
+        onSkip={handleSecurityQuestionsSkip}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 p-4">

@@ -22,7 +22,6 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/changes")
 @RequiredArgsConstructor
-@CrossOrigin(originPatterns = "http://localhost:*")
 public class ChangeController {
     private final ChangePreviewService changePreviewService;
     private final ChangeApprovalService changeApprovalService;

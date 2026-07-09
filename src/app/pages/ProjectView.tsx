@@ -30,7 +30,8 @@ import {
 import { Calendar, Clock, Plus, FileText, ListChecks, CheckCircle, BookOpen, Video, ExternalLink } from 'lucide-react';
 import { apiService, mapProjectResponseToProject, type MeetingResponse, type ChangeResponse } from '../services/api';
 import { toast } from 'sonner';
-import { formatMeetingDate, formatMeetingTime, getMeetingSortValue } from '../utils/meetingDateTime';
+import { getMeetingSortValue } from '../utils/meetingDateTime';
+import { formatMeetingDateLocal, formatMeetingTimeLocal, convertLocalToUTC, convertBackendDateTimeToLocal } from '../utils/timezoneUtils';
 
 type Tab = 'board' | 'meetings' | 'decisions';
 
@@ -49,6 +50,7 @@ export function ProjectView() {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [isUpdatingMeeting, setIsUpdatingMeeting] = useState(false);
+  const [showFullDescription, setShowFullDescription] = useState(false);
   const attemptedProjectLoadRef = useRef<string | null>(null);
   const decisionsLoadKeyRef = useRef<string | null>(null);
 
@@ -259,8 +261,26 @@ export function ProjectView() {
 
   const openRescheduleDialog = (meeting: MeetingResponse) => {
     setRescheduleMeeting(meeting);
-    setRescheduleDate(meeting.meetingDate);
-    setRescheduleTime((meeting.meetingTime || '').slice(0, 5));
+    try {
+      // Convert UTC time back to local timezone for display
+      // Handle both array format from backend and string format
+      const { date, time } = convertBackendDateTimeToLocal(meeting.meetingDate, meeting.meetingTime);
+      setRescheduleDate(date);
+      setRescheduleTime(time);
+    } catch (error) {
+      console.error('Error converting meeting time:', error);
+      // Fallback to raw values if conversion fails
+      setRescheduleDate(
+        Array.isArray(meeting.meetingDate)
+          ? `${meeting.meetingDate[0]}-${String(meeting.meetingDate[1]).padStart(2, '0')}-${String(meeting.meetingDate[2]).padStart(2, '0')}`
+          : String(meeting.meetingDate)
+      );
+      setRescheduleTime(
+        Array.isArray(meeting.meetingTime)
+          ? `${String(meeting.meetingTime[0]).padStart(2, '0')}:${String(meeting.meetingTime[1]).padStart(2, '0')}`
+          : (meeting.meetingTime || '').slice(0, 5)
+      );
+    }
   };
 
   const handleRescheduleMeeting = async () => {
@@ -271,11 +291,19 @@ export function ProjectView() {
 
     setIsUpdatingMeeting(true);
     try {
+      // Convert local time to UTC for storage
+      const utcIsoString = convertLocalToUTC(rescheduleDate, rescheduleTime);
+      const utcDate = new Date(utcIsoString);
+
+      // Extract UTC date and time components
+      const utcDateStr = utcDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const utcTimeStr = utcDate.toISOString().split('T')[1].slice(0, 8); // HH:mm:ss
+
       await apiService.updateMeeting(rescheduleMeeting.id, {
         title: rescheduleMeeting.title,
         description: rescheduleMeeting.description,
-        meetingDate: rescheduleDate,
-        meetingTime: `${rescheduleTime}:00`,
+        meetingDate: utcDateStr,
+        meetingTime: utcTimeStr,
         platform: rescheduleMeeting.platform,
         meetingLink: rescheduleMeeting.meetingLink,
       });
@@ -459,9 +487,19 @@ export function ProjectView() {
       <div className="flex-shrink-0 bg-white border-b border-gray-200 z-30">
         <div className="px-6 md:px-12">
           <div className="flex items-center justify-between py-4">
-            <div>
+            <div className="flex-1">
               <h1 className="text-xl md:text-2xl font-bold text-gray-900">{project.name}</h1>
-              <p className="text-sm text-gray-600 mt-1">{project.description}</p>
+              <p className={`text-sm text-gray-600 mt-1 ${showFullDescription ? '' : 'line-clamp-3'}`}>
+                {project.description}
+              </p>
+              {project.description && project.description.length > 150 && (
+                <button 
+                  onClick={() => setShowFullDescription(!showFullDescription)} 
+                  className="text-blue-600 hover:text-blue-700 text-xs mt-2 font-medium transition-colors"
+                >
+                  {showFullDescription ? 'Show less' : 'Show more'}
+                </button>
+              )}
             </div>
           </div>
           
@@ -648,12 +686,12 @@ export function ProjectView() {
                         <div className="space-y-2 mb-4">
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Calendar className="w-4 h-4 flex-shrink-0" />
-                            <span>{formatMeetingDate(meeting.meetingDate)}</span>
+                            <span>{formatMeetingDateLocal(meeting.meetingDate)}</span>
                           </div>
                           
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Clock className="w-4 h-4 flex-shrink-0" />
-                            <span>{formatMeetingTime(meeting.meetingTime)}</span>
+                            <span>{formatMeetingTimeLocal(meeting.meetingDate, meeting.meetingTime)}</span>
                           </div>
 
                           {normalizedStatus === 'scheduled' && (

@@ -20,7 +20,6 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/summaries")
 @RequiredArgsConstructor
-@CrossOrigin(originPatterns = "http://localhost:*")
 public class SummaryController {
     private final SummaryService summaryService;
     private final JWTService jwtService;

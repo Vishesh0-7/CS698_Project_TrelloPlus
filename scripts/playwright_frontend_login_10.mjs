@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 
 const FRONTEND_BASES = (process.env.FRONTEND_BASES || '').trim();
 const FRONTEND_BASE = process.env.FRONTEND_BASE || 'http://127.0.0.1:5173';
-const BACKEND_BASE = process.env.BACKEND_BASE || 'http://localhost:8080/api/v1';
+const BACKEND_BASE = process.env.BACKEND_BASE || 'http://127.0.0.1:8080/api/v1';
 const USERS = Number(process.env.USERS || 10);
 const PASSWORD = process.env.PASSWORD || 'StrongPass!123';
 const USER_EMAIL_PREFIX = process.env.USER_EMAIL_PREFIX || 'p4_ui_user';

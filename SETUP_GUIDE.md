@@ -93,9 +93,10 @@ Set at minimum:
 For production-like runs also set:
 
 - SPRING_PROFILES_ACTIVE=prod
-- OLLAMA_BASE_URL
-- OLLAMA_MODEL
-- OLLAMA_TIMEOUT_SECONDS
+- BEDROCK_REGION
+- BEDROCK_MODEL_ID
+- BEDROCK_TIMEOUT_SECONDS
+- BEDROCK_MAX_TOKENS
 
 ## Startup Procedures
 

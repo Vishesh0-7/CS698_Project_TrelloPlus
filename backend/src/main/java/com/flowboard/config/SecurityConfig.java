@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -65,6 +66,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(authz -> authz
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/error", "/api/v1/error").permitAll()
                 .requestMatchers("/auth/**", "/api/v1/auth/**").permitAll()
                 .requestMatchers("/ws/**").permitAll()
@@ -83,7 +85,16 @@ public class SecurityConfig {
         CorsConfiguration cors = new CorsConfiguration();
         cors.setAllowedOriginPatterns(Arrays.asList(allowedOrigins.split(",")));
         cors.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        cors.setAllowedHeaders(Arrays.asList(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE));
+        cors.setAllowedHeaders(Arrays.asList(
+            HttpHeaders.AUTHORIZATION,
+            HttpHeaders.CONTENT_TYPE,
+            "X-Amz-Date",
+            "X-Api-Key",
+            "X-Amz-Security-Token",
+            "X-Amzn-Trace-Id"
+        ));
+        cors.setExposedHeaders(Arrays.asList(HttpHeaders.AUTHORIZATION));
+        cors.setMaxAge(3600L);
         cors.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

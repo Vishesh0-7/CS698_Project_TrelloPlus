@@ -1,0 +1,32 @@
+{
+    "UserName": "CD_User",
+    "PolicyName": "ApiGatewayCorsAutomation",
+    "PolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "ApiGatewayCorsAutomation",
+                "Effect": "Allow",
+                "Action": [
+                    "apigateway:GET",
+                    "apigateway:POST",
+                    "apigateway:PUT",
+                    "apigateway:PATCH"
+                ],
+                "Resource": [
+                    "arn:aws:apigateway:us-east-2::/restapis",
+                    "arn:aws:apigateway:us-east-2::/restapis/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources/*/methods/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources/*/methods/*/integration",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources/*/methods/*/responses/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/resources/*/methods/*/integration/responses/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/gatewayresponses/*",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/deployments",
+                    "arn:aws:apigateway:us-east-2::/restapis/*/stages/*"
+                ]
+            }
+        ]
+    }
+}

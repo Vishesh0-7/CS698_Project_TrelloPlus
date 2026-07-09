@@ -5,7 +5,7 @@ import { Textarea } from '../components/ui/textarea';
 import { ArrowLeft, Sparkles, Loader2, Video, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiService, type MeetingResponse } from '../services/api';
-import { formatMeetingDate, formatMeetingTime } from '../utils/meetingDateTime';
+import { formatMeetingDateLocal, formatMeetingTimeLocal } from '../utils/timezoneUtils';
 
 export function MeetingTranscript() {
   const { meetingId } = useParams<{ meetingId: string }>();
@@ -13,6 +13,7 @@ export function MeetingTranscript() {
   const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
   const [transcript, setTranscript] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const toJoinHref = (value?: string) => {
     if (!value) return null;
@@ -37,6 +38,10 @@ export function MeetingTranscript() {
         if (isMounted) {
           toast.error(error instanceof Error ? error.message : 'Failed to load meeting');
         }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -46,6 +51,15 @@ export function MeetingTranscript() {
       isMounted = false;
     };
   }, [meetingId]);
+
+  if (isLoading) {
+    return (
+      <div className="p-8 pt-24 text-center">
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading meeting...</h2>
+        <div className="w-6 h-6 border-3 border-gray-300 border-t-blue-600 rounded-full animate-spin mx-auto mt-4"></div>
+      </div>
+    );
+  }
 
   if (!meeting) {
     return (
@@ -107,12 +121,8 @@ export function MeetingTranscript() {
           <h1 className="text-2xl font-bold text-gray-900 mb-2">{meeting.title}</h1>
           <p className="text-gray-600 mb-1">Project: {meeting.projectName || 'N/A'}</p>
           <p className="text-gray-600">
-            {formatMeetingDate(meeting.meetingDate, {
-              month: 'long',
-              day: 'numeric',
-              year: 'numeric',
-            })}{' '}
-            at {formatMeetingTime(meeting.meetingTime)}
+            {formatMeetingDateLocal(meeting.meetingDate)}{' '}
+            at {formatMeetingTimeLocal(meeting.meetingDate, meeting.meetingTime)}
           </p>
           {isScheduledMeeting && (
             <div className="mt-3 space-y-1 text-sm text-gray-600">

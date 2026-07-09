@@ -10,12 +10,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
+import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelResponse;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,26 +38,26 @@ public class AIEngine {
     };
     private static final Set<String> VALID_PRIORITIES = Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
 
-    @Value("${ai.ollama.base-url:http://localhost:11434}")
-    private String ollamaBaseUrl;
+    @Value("${ai.bedrock.region:us-east-2}")
+    private String bedrockRegion;
 
-    @Value("${ai.ollama.model:qwen2.5:7b}")
-    private String ollamaModel;
+    @Value("${ai.bedrock.model-id:amazon.nova-micro-v1:0}")
+    private String bedrockModelId;
 
-    @Value("${ai.ollama.timeout-seconds:30}")
-    private long ollamaTimeoutSeconds;
+    @Value("${ai.bedrock.timeout-seconds:30}")
+    private long bedrockTimeoutSeconds;
+
+    @Value("${ai.bedrock.max-tokens:2048}")
+    private int bedrockMaxTokens;
 
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
-        .build();
 
     /**
      * Analyzes project description and generates AI-suggested board structure.
      */
     public AIAnalysisResult analyzeProjectDescription(String projectName, String description) {
         try {
-            ProjectAnalysisPayload payload = callOllama(
+            ProjectAnalysisPayload payload = callBedrock(
                 buildProjectPrompt(projectName, description),
                 ProjectAnalysisPayload.class
             );
@@ -87,7 +89,7 @@ public class AIEngine {
      */
     public MeetingAnalysisResult analyzeMeetingTranscript(String transcript) {
         try {
-            MeetingAnalysisPayload payload = callOllama(
+            MeetingAnalysisPayload payload = callBedrock(
                 buildMeetingPrompt(transcript),
                 MeetingAnalysisPayload.class
             );
@@ -159,7 +161,7 @@ public class AIEngine {
 
     private List<ProjectStageSuggestion> fetchStagesWithRetry(String projectName, String description) {
         try {
-            ProjectAnalysisPayload retryPayload = callOllama(
+            ProjectAnalysisPayload retryPayload = callBedrock(
                 buildProjectStagesPrompt(projectName, description),
                 ProjectAnalysisPayload.class
             );
@@ -176,7 +178,7 @@ public class AIEngine {
         List<AIAnalysisResult.StageInfo> stages
     ) {
         try {
-            ProjectAnalysisPayload retryPayload = callOllama(
+            ProjectAnalysisPayload retryPayload = callBedrock(
                 buildProjectTasksPrompt(projectName, description, stages),
                 ProjectAnalysisPayload.class
             );
@@ -255,27 +257,117 @@ public class AIEngine {
         return result;
     }
 
-    private <T> T callOllama(String prompt, Class<T> responseType) throws IOException, InterruptedException {
-        String requestBody = objectMapper.writeValueAsString(new OllamaGenerateRequest(ollamaModel, prompt));
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(normalizeBaseUrl(ollamaBaseUrl) + "/api/generate"))
-            .timeout(Duration.ofSeconds(ollamaTimeoutSeconds))
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-            .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Ollama returned HTTP " + response.statusCode() + ": " + response.body());
-        }
-
-        OllamaGenerateResponse ollamaResponse = objectMapper.readValue(response.body(), OllamaGenerateResponse.class);
-        String generatedJson = stripCodeFences(ollamaResponse.response);
+    private <T> T callBedrock(String prompt, Class<T> responseType) throws IOException {
+        String generatedJson = stripCodeFences(invokeBedrock(prompt));
         if (generatedJson == null || generatedJson.isBlank()) {
-            throw new IOException("Ollama response body was empty");
+            throw new IOException("Bedrock response body was empty");
         }
 
         return objectMapper.readValue(generatedJson, responseType);
+    }
+
+    private String invokeBedrock(String prompt) throws IOException {
+        try (BedrockRuntimeClient bedrockClient = BedrockRuntimeClient.builder()
+            .region(Region.of(bedrockRegion))
+            .overrideConfiguration(ClientOverrideConfiguration.builder()
+                .apiCallTimeout(Duration.ofSeconds(bedrockTimeoutSeconds))
+                .build())
+            .build()) {
+            String requestJson = buildBedrockRequestPayload(prompt);
+
+            InvokeModelRequest request = InvokeModelRequest.builder()
+                .modelId(bedrockModelId)
+                .contentType("application/json")
+                .accept("application/json")
+                .body(SdkBytes.fromUtf8String(requestJson))
+                .build();
+
+            InvokeModelResponse response = bedrockClient.invokeModel(request);
+            return extractBedrockTextResponse(response == null ? null : response.body());
+        } catch (Exception ex) {
+            throw new IOException("Bedrock call failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    private String buildBedrockRequestPayload(String prompt) throws IOException {
+        if (isAnthropicModel()) {
+            return objectMapper.writeValueAsString(new AnthropicMessagesRequest(prompt, bedrockMaxTokens));
+        }
+
+        if (isNovaModel()) {
+            return objectMapper.writeValueAsString(new NovaMessagesRequest(prompt, bedrockMaxTokens));
+        }
+
+        if (isTitanTextModel()) {
+            return objectMapper.writeValueAsString(new TitanTextRequest(prompt, bedrockMaxTokens));
+        }
+
+        throw new IOException("Unsupported BEDROCK_MODEL_ID format: " + bedrockModelId
+            + ". Supported prefixes: anthropic., amazon.nova, amazon.titan-text");
+    }
+
+    private String extractBedrockTextResponse(SdkBytes responseBody) throws IOException {
+        if (responseBody == null) {
+            throw new IOException("Bedrock returned an empty response body");
+        }
+
+        String rawJson = responseBody.asUtf8String();
+        if (rawJson == null || rawJson.isBlank()) {
+            throw new IOException("Bedrock returned an empty response payload");
+        }
+
+        if (isAnthropicModel()) {
+            AnthropicMessagesResponse response = objectMapper.readValue(rawJson, AnthropicMessagesResponse.class);
+            if (response.content != null) {
+                for (AnthropicContentBlock block : response.content) {
+                    if (block != null && block.text != null && !block.text.isBlank()) {
+                        return block.text;
+                    }
+                }
+            }
+            throw new IOException("Bedrock anthropic response did not include text content");
+        }
+
+        if (isNovaModel()) {
+            NovaMessagesResponse response = objectMapper.readValue(rawJson, NovaMessagesResponse.class);
+            if (response.output != null && response.output.message != null && response.output.message.content != null) {
+                for (NovaContentPart part : response.output.message.content) {
+                    if (part != null && part.text != null && !part.text.isBlank()) {
+                        return part.text;
+                    }
+                }
+            }
+            throw new IOException("Bedrock Nova response did not include text content");
+        }
+
+        if (isTitanTextModel()) {
+            TitanTextResponse response = objectMapper.readValue(rawJson, TitanTextResponse.class);
+            if (response.results != null) {
+                for (TitanTextResult result : response.results) {
+                    if (result != null && result.outputText != null && !result.outputText.isBlank()) {
+                        return result.outputText;
+                    }
+                }
+            }
+            throw new IOException("Bedrock Titan response did not include output text");
+        }
+
+        throw new IOException("Unsupported BEDROCK_MODEL_ID format for response parsing: " + bedrockModelId);
+    }
+
+    private boolean isAnthropicModel() {
+        String value = bedrockModelId == null ? "" : bedrockModelId.toLowerCase(Locale.ROOT);
+        return value.startsWith("anthropic.") || value.contains("anthropic.claude");
+    }
+
+    private boolean isNovaModel() {
+        String value = bedrockModelId == null ? "" : bedrockModelId.toLowerCase(Locale.ROOT);
+        return value.startsWith("amazon.nova") || value.contains("amazon.nova");
+    }
+
+    private boolean isTitanTextModel() {
+        String value = bedrockModelId == null ? "" : bedrockModelId.toLowerCase(Locale.ROOT);
+        return value.startsWith("amazon.titan-text") || value.contains("amazon.titan-text");
     }
 
     private String buildProjectPrompt(String projectName, String description) {
@@ -316,13 +408,6 @@ public class AIEngine {
             + "\"decisions\":[{\"description\":\"string\",\"sourceContext\":\"string\"}],"
             + "\"changes\":[{\"type\":\"CREATE_CARD|UPDATE_CARD|DELETE_CARD|MOVE_CARD|CREATE_STAGE|UPDATE_STAGE|DELETE_STAGE\",\"description\":\"string\",\"context\":\"string\"}]}. "
             + "Keep the output concise and grounded in the transcript. Transcript: " + safeText(transcript) + ".";
-    }
-
-    private String normalizeBaseUrl(String baseUrl) {
-        if (baseUrl == null || baseUrl.isBlank()) {
-            return "http://localhost:11434";
-        }
-        return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 
     private String stripCodeFences(String value) {
@@ -371,40 +456,6 @@ public class AIEngine {
 
     private String safeText(String value) {
         return value == null ? "" : value.replace('"', '\'').trim();
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private static class OllamaGenerateRequest {
-        private final String model;
-        private final String prompt;
-        private final boolean stream = false;
-        private final String format = "json";
-
-        private OllamaGenerateRequest(String model, String prompt) {
-            this.model = model;
-            this.prompt = prompt;
-        }
-
-        public String getModel() {
-            return model;
-        }
-
-        public String getPrompt() {
-            return prompt;
-        }
-
-        public boolean isStream() {
-            return stream;
-        }
-
-        public String getFormat() {
-            return format;
-        }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    private static class OllamaGenerateResponse {
-        public String response;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -458,6 +509,122 @@ public class AIEngine {
         public String description;
         @JsonAlias({"sourceContext", "source_context"})
         public String context;
+    }
+
+    private static class AnthropicMessagesRequest {
+        public String anthropic_version = "bedrock-2023-05-31";
+        public int max_tokens;
+        public float temperature = 0.1f;
+        public List<AnthropicMessage> messages;
+
+        private AnthropicMessagesRequest(String prompt, int maxTokens) {
+            this.max_tokens = maxTokens;
+            this.messages = List.of(new AnthropicMessage(prompt));
+        }
+    }
+
+    private static class AnthropicMessage {
+        public String role = "user";
+        public String content;
+
+        private AnthropicMessage(String content) {
+            this.content = content;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class AnthropicMessagesResponse {
+        public List<AnthropicContentBlock> content;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class AnthropicContentBlock {
+        public String type;
+        public String text;
+    }
+
+    private static class NovaMessagesRequest {
+        public String schemaVersion = "messages-v1";
+        public List<NovaMessage> messages;
+        public NovaInferenceConfig inferenceConfig;
+
+        private NovaMessagesRequest(String prompt, int maxTokens) {
+            this.messages = List.of(new NovaMessage(prompt));
+            this.inferenceConfig = new NovaInferenceConfig(maxTokens);
+        }
+    }
+
+    private static class NovaMessage {
+        public String role = "user";
+        public List<NovaContentPart> content;
+
+        private NovaMessage(String prompt) {
+            this.content = List.of(new NovaContentPart(prompt));
+        }
+    }
+
+    private static class NovaContentPart {
+        public String text;
+
+        public NovaContentPart() {
+        }
+
+        public NovaContentPart(String text) {
+            this.text = text;
+        }
+    }
+
+    private static class NovaInferenceConfig {
+        public int max_new_tokens;
+        public float temperature = 0.1f;
+
+        private NovaInferenceConfig(int maxTokens) {
+            this.max_new_tokens = maxTokens;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class NovaMessagesResponse {
+        public NovaOutput output;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class NovaOutput {
+        public NovaMessageOutput message;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class NovaMessageOutput {
+        public List<NovaContentPart> content;
+    }
+
+    private static class TitanTextRequest {
+        public String inputText;
+        public TitanTextGenerationConfig textGenerationConfig;
+
+        private TitanTextRequest(String prompt, int maxTokens) {
+            this.inputText = prompt;
+            this.textGenerationConfig = new TitanTextGenerationConfig(maxTokens);
+        }
+    }
+
+    private static class TitanTextGenerationConfig {
+        public int maxTokenCount;
+        public float temperature = 0.1f;
+
+        private TitanTextGenerationConfig(int maxTokens) {
+            this.maxTokenCount = maxTokens;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class TitanTextResponse {
+        public List<TitanTextResult> results;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private static class TitanTextResult {
+        public String outputText;
     }
 
     // Inner class for meeting analysis results

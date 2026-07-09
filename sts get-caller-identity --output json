@@ -1,0 +1,47 @@
+{
+    "apps": [
+        {
+            "appId": "d3d9fosf7j2tqi",
+            "appArn": "arn:aws:amplify:us-east-2:875911183797:apps/d3d9fosf7j2tqi",
+            "name": "CS698_Project_TrelloPlus",
+            "tags": {},
+            "repository": "https://github.com/Vishesh0-7/CS698_Project_TrelloPlus",
+            "platform": "WEB",
+            "createTime": "2026-04-14T23:40:24-04:00",
+            "updateTime": "2026-05-03T10:30:10.526000-04:00",
+            "environmentVariables": {
+                "AMPLIFY_DIFF_DEPLOY": "false",
+                "AMPLIFY_MONOREPO_APP_ROOT": ".",
+                "VITE_API_BASE_URL": "https://qyjknr7m82.execute-api.us-east-2.amazonaws.com/prod",
+                "VITE_ENABLE_REALTIME": "false"
+            },
+            "defaultDomain": "d3d9fosf7j2tqi.amplifyapp.com",
+            "enableBranchAutoBuild": false,
+            "enableBranchAutoDeletion": false,
+            "enableBasicAuth": false,
+            "customRules": [
+                {
+                    "source": "</^[^.]+$/>",
+                    "target": "/index.html",
+                    "status": "200"
+                }
+            ],
+            "productionBranch": {
+                "lastDeployTime": "2026-05-03T10:43:49.721000-04:00",
+                "status": "SUCCEED",
+                "branchName": "main"
+            },
+            "buildSpec": "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n        - npm ci\n    build:\n      commands:\n        - npm run build\n  artifacts:\n    baseDirectory: dist\n    files:\n      - '**/*'\n  cache:\n    paths:\n      - node_modules/**/*\n",
+            "customHeaders": "",
+            "enableAutoBranchCreation": false,
+            "repositoryCloneMethod": "TOKEN",
+            "cacheConfig": {
+                "type": "AMPLIFY_MANAGED_NO_COOKIES"
+            },
+            "webhookCreateTime": "2026-05-03T10:30:10.505000-04:00",
+            "jobConfig": {
+                "buildComputeType": "STANDARD_8GB"
+            }
+        }
+    ]
+}

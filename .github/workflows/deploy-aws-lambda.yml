@@ -1,0 +1,115 @@
+name: Deploy AWS Lambda
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  deploy-lambda:
+    name: Package and Deploy Backend Lambda
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Validate deployment secrets
+        env:
+          LAMBDA_FUNCTION_NAME: ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }}
+          LAMBDA_ARTIFACTS_BUCKET: ${{ secrets.AWS_LAMBDA_ARTIFACTS_BUCKET }}
+        run: |
+          if [ -z "$LAMBDA_FUNCTION_NAME" ]; then
+            echo "Missing GitHub secret: AWS_LAMBDA_FUNCTION_NAME" >&2
+            exit 1
+          fi
+
+          if [ -z "$LAMBDA_ARTIFACTS_BUCKET" ]; then
+            echo "Missing GitHub secret: AWS_LAMBDA_ARTIFACTS_BUCKET" >&2
+            exit 1
+          fi
+
+      - name: Package Lambda artifact
+        run: |
+          cd backend
+          mvn -B -ntp -Plambda clean package
+
+      - name: Upload artifact to S3
+        env:
+          LAMBDA_ARTIFACTS_BUCKET: ${{ secrets.AWS_LAMBDA_ARTIFACTS_BUCKET }}
+          ARTIFACT_KEY: flowboard-backend-${{ github.sha }}.jar
+        run: |
+          aws s3 cp \
+            backend/target/flowboard-backend-1.0.0.jar \
+            s3://$LAMBDA_ARTIFACTS_BUCKET/$ARTIFACT_KEY
+
+      - name: Update Lambda function code
+        env:
+          LAMBDA_FUNCTION_NAME: ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }}
+          LAMBDA_ARTIFACTS_BUCKET: ${{ secrets.AWS_LAMBDA_ARTIFACTS_BUCKET }}
+          ARTIFACT_KEY: flowboard-backend-${{ github.sha }}.jar
+        run: |
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --s3-bucket "$LAMBDA_ARTIFACTS_BUCKET" \
+            --s3-key "$ARTIFACT_KEY"
+
+          aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION_NAME"
+
+      - name: Update Lambda runtime configuration
+        env:
+          LAMBDA_FUNCTION_NAME: ${{ secrets.AWS_LAMBDA_FUNCTION_NAME }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          SPRING_PROFILES_ACTIVE: prod
+        run: |
+          EXISTING_VARS=$(aws lambda get-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --query 'Environment.Variables' \
+            --output json)
+
+          UPDATED_VARS=$(echo "$EXISTING_VARS" | jq \
+            --arg cors "$CORS_ALLOWED_ORIGINS" \
+            --arg springProfile "$SPRING_PROFILES_ACTIVE" \
+            '. + {CORS_ALLOWED_ORIGINS: $cors, SPRING_PROFILES_ACTIVE: $springProfile}')
+
+          ATTEMPT=1
+          MAX_ATTEMPTS=6
+          until aws lambda update-function-configuration \
+            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --environment "{\"Variables\":$UPDATED_VARS}"; do
+            if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Failed to update Lambda configuration after $MAX_ATTEMPTS attempts." >&2
+              exit 1
+            fi
+
+            echo "Lambda configuration update conflicted (attempt $ATTEMPT/$MAX_ATTEMPTS). Retrying in 10s..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 10
+          done
+
+          aws lambda wait function-updated --function-name "$LAMBDA_FUNCTION_NAME"

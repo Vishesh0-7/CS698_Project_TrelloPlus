@@ -6,8 +6,7 @@ import { useProjectStore } from '../store/projectStore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiService, mapProjectResponseToProject } from '../services/api';
 import { toast } from 'sonner';
-
-const DASHBOARD_SYNC_INTERVAL_MS = 5000;
+import { useWebSocketProjectUpdates } from '../hooks/useWebSocketProjectUpdates';
 
 export function Dashboard() {
   const navigate = useNavigate();
@@ -36,6 +35,7 @@ export function Dashboard() {
       }
     }, [setProjects]);
 
+  // Load projects on initial mount
   useEffect(() => {
     let isCancelled = false;
 
@@ -43,28 +43,23 @@ export function Dashboard() {
     void loadProjects({ showBlockingLoader: shouldBlockUI, showErrorToast: true });
     shouldBlockInitialUIRef.current = false;
 
-    const syncIfActive = () => {
-      if (isCancelled || document.visibilityState !== 'visible') {
-        return;
-      }
-
-      void loadProjects();
-    };
-
-    const intervalId = window.setInterval(syncIfActive, DASHBOARD_SYNC_INTERVAL_MS);
-    document.addEventListener('visibilitychange', syncIfActive);
-
     return () => {
       isCancelled = true;
-      window.clearInterval(intervalId);
-      document.removeEventListener('visibilitychange', syncIfActive);
     };
   }, [loadProjects]);
+
+  // Callback for WebSocket to refresh projects
+  const handleProjectsChanged = useCallback(() => {
+    void loadProjects({ showErrorToast: false });
+  }, [loadProjects]);
+
+  // Enable real-time project list updates via WebSocket instead of polling
+  useWebSocketProjectUpdates(handleProjectsChanged, projects.map(p => p.id));
 
   // Empty State
   if (isLoading) {
     return (
-      <div className="p-4 md:p-8 pt-20 md:pt-24">
+      <div className="h-[calc(100vh-4rem)] overflow-y-auto p-4 md:p-8 pt-20 md:pt-24">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-4" />
@@ -77,7 +72,7 @@ export function Dashboard() {
 
   if (projects.length === 0) {
     return (
-      <div className="p-4 md:p-8 pt-20 md:pt-24">
+      <div className="h-[calc(100vh-4rem)] overflow-y-auto p-4 md:p-8 pt-20 md:pt-24">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 md:mb-8 gap-4">
             <div>
@@ -119,7 +114,7 @@ export function Dashboard() {
 
   // Success State - Projects displayed
   return (
-    <div className="p-4 md:p-8 pt-20 md:pt-24">
+    <div className="h-[calc(100vh-4rem)] overflow-y-auto p-4 md:p-8 pt-20 md:pt-24">
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 md:mb-8 gap-4">
           <div>

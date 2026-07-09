@@ -1,387 +1,438 @@
 # TrelloPlus - AI-Powered Workflow Management
 
-An intelligent, team-focused project management application that leverages AI to streamline workflow automation, meeting management, and collaborative kanban boards.
+TrelloPlus is an intelligent, team-focused project management app with:
+- AI-generated Kanban boards from project descriptions
+- Real-time collaborative board updates
+- Meeting transcript analysis with AI summaries
+- Change review and approval workflows
 
-## 🌟 Features
+## Features
 
-### 🤖 AI-Powered Board Generation
-- Generate kanban boards automatically from project descriptions
-- AI analyzes project requirements and creates optimal workflow stages
-- Pre-populates work items based on project scope
+- AI board generation (stages and starter tasks)
+- Drag-and-drop Kanban board management
+- Team project collaboration with role-based access
+- Meeting summaries, action items, and decisions
+- Change voting and controlled board updates
+- Accessibility-first UI (WCAG 2.1 AA targets)
 
-### 📊 Kanban Board Management
-- Drag-and-drop task management across workflow stages
-- Create, edit, and organize tasks with rich details
-- Real-time board synchronization across team members
-- Customizable workflow columns and stages
-
-### 🎙️ Meeting Management & AI Summaries
-- Create and manage team meetings
-- Automatic extraction of action items, decisions, and changes from transcripts
-- Real-time meeting notes and follow-ups
-
-### ✅ Change Review & Approval System
-- Review proposed changes before applying them
-- Kanban modification approval workflows
-- Team-based decision making
-
-### 👥 Team Collaboration
-- Multi-user project management
-- Role-based access control
-- Team workspace management
-
-### ♿ Accessibility First
-- WCAG 2.1 Level AA compliant
-- Keyboard navigation support
-- Semantic HTML with ARIA labels
-- Screen reader optimized
-- High contrast mode support
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
-- **React** 18.3.1 - UI library
-- **TypeScript** - Type-safe JavaScript
-- **Vite** 6.3.5 - Fast build tool
-- **Tailwind CSS** 4.1.12 - Utility-first CSS framework
-- **Radix UI** - Headless component library
-- **React Router** 7.13.0 - Routing
-- **React DnD** - Drag-and-drop library
-- **Zustand** 5.0.11 - State management
-- **React Hook Form** - Form management
+- React 18 + TypeScript
+- Vite
+- Tailwind CSS
+- Zustand
+- React Router
+- React DnD
+- STOMP + SockJS for real-time updates
 
-### UI & Styling
-- **shadcn/ui** - High-quality React components
-- **Lucide React** - Icon library
-- **Sonner** - Toast notifications
-- **Framer Motion** - Animation library
-- **Material-UI** - Additional UI components
+### Backend
+- Spring Boot 3 (Java 21)
+- Spring Security (JWT)
+- Spring Data JPA + Hibernate
+- WebSocket (STOMP)
+- PostgreSQL + Flyway
 
-### Additional Libraries
-- **date-fns** - Date manipulation
-- **Recharts** - Charts and graphs
-- **React Slick** - Carousel component
+## Project Structure
 
-## 📦 Installation
-
-### Prerequisites
-- Node.js 18+
-- npm or pnpm
-
-### Setup
-
-```bash
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-
-# Build for production
-npm run build
-```
-
-The application will be available at `http://localhost:5173`
-
-### Frontend Environment Variables
-
-The frontend reads deployment settings from Vite env vars. For local development, the defaults in `.env.example` point to the local backend. For AWS deployment, set these in Amplify to your API Gateway and realtime endpoint:
-
-- `VITE_API_BASE_URL` - REST API base URL, for example `https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/api/v1`
-- `VITE_WS_ENDPOINT` - WebSocket/SockJS endpoint, for example `https://your-backend-host/api/v1/ws/board`
-- `VITE_REQUEST_TIMEOUT_MS` - Optional frontend timeout for regular API calls in milliseconds, for example `30000`
-- `VITE_LLM_REQUEST_TIMEOUT_MS` - Optional frontend timeout for long AI/summary requests in milliseconds, for example `90000`
-
-If you only deploy the REST API to API Gateway, keep the WebSocket endpoint on a backend host that supports SockJS or disable the realtime board hook until you add a WebSocket-compatible AWS endpoint.
-
-## 🚀 Simple Deployment: Render + Vercel
-
-If you want the lowest-friction production setup for this repo, use Render for the backend and Vercel for the frontend.
-
-### Render Backend
-- Create a new Render service from the repository and point it at `render.yaml`, or create a Java web service manually with `backend` as the root directory.
-- Set `SPRING_PROFILES_ACTIVE=prod`.
-- Set `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `JWT_SECRET`, and `CORS_ALLOWED_ORIGINS` in Render.
-- If you use Render Postgres, copy its JDBC connection string into `DB_URL`.
-- Optional: set `OLLAMA_BASE_URL` if the AI features should talk to a deployed Ollama service.
-
-### Vercel Frontend
-- Import the repository into Vercel and keep the project root at the repo root.
-- Set `VITE_API_BASE_URL` to your Render backend URL, for example `https://your-backend.onrender.com/api/v1`.
-- Set `VITE_WS_ENDPOINT` to the websocket endpoint on that backend, for example `https://your-backend.onrender.com/api/v1/ws/board`.
-- `vercel.json` handles client-side routing so deep links like `/board/:projectId` work after refresh.
-
-### Build Commands
-- Frontend build: `npm run build`
-- Backend build: `cd backend && mvn -DskipTests package`
-
-## 🚀 Getting Started
-
-### Create a New Project
-1. Navigate to the Dashboard
-2. Click "New Project"
-3. Provide a project description
-4. AI will auto-generate your kanban board with suggested workflow stages and initial tasks
-
-### Manage Your Kanban Board
-- **Drag tasks** between columns to update status
-- **Click tasks** to view and edit details
-- **Add new tasks** directly to any column
-- **Rename or delete** columns as needed
-
-### Schedule and Manage Meetings
-1. Go to Meetings section
-2. Create a new meeting or select an existing one
-3. Add meeting notes and participants
-4. End the meeting to generate AI summary
-5. Review extracted action items and decisions
-
-### Review Changes
-1. View pending change approvals in your dashboard
-2. Review proposed modifications to the kanban board
-3. Approve or reject changes as a team
-4. Applied changes are logged for audit purposes
-
-## 📁 Project Structure
-
-```
+```text
 src/
-├── app/
-│   ├── components/          # Reusable UI components
-│   │   ├── figma/          # Figma-specific components
-│   │   └── ui/             # UI primitives (buttons, cards, etc.)
-│   ├── pages/              # Page components (routes)
-│   ├── store/              # Zustand state management
-│   │   ├── projectStore.ts
-│   │   ├── meetingStore.ts
-│   │   └── changeStore.ts
-│   ├── App.tsx             # Root component
-│   └── routes.ts           # Route definitions
-├── main.tsx                # Entry point
-└── styles/                 # Global styles
+  app/
+    components/
+    hooks/
+    pages/
+    services/
+    store/
+backend/
+  src/main/java/com/flowboard/
+  src/main/resources/
+  src/test/java/com/flowboard/
+docs/
+scripts/
 ```
 
-## 🔒 Security & Privacy
+## Run the App Locally (For Web Users)
 
-- **Role-Based Access Control (RBAC)** - Fine-grained permission management
-- **Authentication** - Secure user authentication
-- **Data Encryption** - Sensitive data protection
-- **Audit Logging** - Complete change history
-- **Privacy Compliant** - User data handled responsibly
+These steps are for someone who forks/clones the repo and wants to run the full application in a browser.
 
-See [ACCESSIBILITY_COMPLIANCE.md](ACCESSIBILITY_COMPLIANCE.md) for accessibility details and [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for component attributions.
+### 1. Prerequisites
 
-## 📚 Documentation
+Install:
+- Git
+- Node.js 18+
+- npm
+- Java 21 (JDK)
+- Maven 3.8+
+- Docker Desktop or Docker Engine (recommended for PostgreSQL)
 
-- [Dev Spec 1](docs/dev_spec_1.md) - AI-powered board generation system
-- [Dev Spec 2](docs/dev_spec_2.md) - Meeting management and AI summaries
-- [Dev Spec 3](docs/dev_spec_3.md) - Change review and approval system
-- [Accessibility Compliance](ACCESSIBILITY_COMPLIANCE.md) - WCAG 2.1 Level AA details
-
-## 🎨 UI Components
-
-Built with [shadcn/ui](https://ui.shadcn.com/) components and [Radix UI](https://www.radix-ui.com/) primitives, featuring:
-- Modals and dialogs
-- Form controls and validations
-- Tables and data displays
-- Tooltips and popovers
-- Notifications and alerts
-- Responsive navigation
-
-## 🔄 State Management
-
-The application uses **Zustand** for efficient state management with separate stores:
-- `projectStore.ts` - Project and board state
-- `meetingStore.ts` - Meeting and transcript state
-- `changeStore.ts` - Change request and approval state
-
-## 🌍 Browser Support
-
-- Chrome/Edge (latest)
-- Firefox (latest)
-- Safari 14+
-- Any modern ES2020+ compatible browser
-
-## 📝 Scripts
+### 2. Fork and clone
 
 ```bash
-npm run dev        # Start development server
-npm run build      # Build for production
+git clone https://github.com/<your-username>/CS698_Project_TrelloPlus.git
+cd CS698_Project_TrelloPlus
 ```
 
-## Testing on Local Machine
+### 3. Create environment file
 
-This section covers everything needed to run tests manually on a developer machine for both frontend and backend, including required frameworks/libraries and coverage commands.
+```bash
+cp .env.example .env
+```
 
-### Frontend Testing
+Edit `.env` and set at minimum:
+- `DB_URL=jdbc:postgresql://localhost:5432/flowboard`
+- `DB_USERNAME=flowboard`
+- `DB_PASSWORD=change-me`
+- `JWT_SECRET=<a-random-secret-at-least-32-characters>`
+- `CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`
 
-#### Prerequisites
-- Node.js 18+ (Node 20 LTS recommended)
-- npm (bundled with Node.js)
+### 4. Start PostgreSQL
 
-#### Frameworks and Libraries (installed by npm)
-Run `npm install` in the repository root to install all frontend dependencies from `package.json`, including:
-- React + React DOM
-- TypeScript + Vite
-- Jest + ts-jest + jest-environment-jsdom
-- Testing Library (`@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`)
-- UI/runtime libraries (Tailwind, Radix UI, React Router, React DnD, Zustand, etc.)
+```bash
+docker compose -f docker-compose.db.yml up -d
+```
 
-#### Install and run tests
-From repository root:
+### 5. Start backend (Spring Boot)
 
-Windows (PowerShell), macOS, and Linux:
+From project root:
+
+```bash
+cd backend
+set -a && source ../.env && set +a
+mvn spring-boot:run
+```
+
+Backend runs at `http://localhost:8080/api/v1`.
+
+### 6. Start frontend (Vite)
+
+Open another terminal from project root:
 
 ```bash
 npm install
-npm run test
+npm run dev
 ```
 
-Useful commands:
+Frontend runs at `http://localhost:5173`.
+
+### 7. Use the app
+
+- Open `http://localhost:5173`
+- Register a new account
+- Create a project and board
+- Add cards, move cards, and test real-time updates
+
+## Local Testing
+
+### Frontend
 
 ```bash
-npm run test:watch      # watch mode
-npm run test:coverage   # full frontend coverage
+npm test
+npm run test:watch
+npm run test:coverage
 ```
 
-#### Frontend targeted coverage
-Target files:
-- US1: `src/app/pages/KanbanBoard.tsx`
-- US2: `src/app/pages/MeetingSummary.tsx`
-- US3: `src/app/pages/MeetingChanges.tsx`
-
-Run from repository root:
-
-Windows (PowerShell), macOS, and Linux:
+### Backend
 
 ```bash
-npm run test -- src/app/pages/__tests__/MeetingSummary.test.tsx src/app/pages/__tests__/MeetingChanges.test.tsx src/app/pages/__tests__/KanbanBoard.test.tsx --coverage --collectCoverageFrom="src/app/pages/KanbanBoard.tsx" --collectCoverageFrom="src/app/pages/MeetingSummary.tsx" --collectCoverageFrom="src/app/pages/MeetingChanges.tsx"
-```
-
-### Backend Testing
-
-#### Prerequisites
-- Java 21 JDK
-- Maven 3.8+
-- PostgreSQL 16+ (or Docker for local database)
-
-#### Frameworks and Libraries (resolved by Maven)
-Run Maven once to resolve all backend dependencies defined in `backend/pom.xml`, including:
-- Spring Boot (Web, Data JPA, Security, Validation, WebSocket)
-- Flyway
-- PostgreSQL JDBC driver
-- JWT libraries (`jjwt`)
-- Jackson
-- Lombok
-- Spring Boot Test + Spring Security Test
-- JaCoCo Maven plugin (coverage)
-
-#### Install dependencies and run tests
-From `backend` folder:
-
-Windows (PowerShell), macOS, and Linux:
-
-```bash
-mvn clean install -DskipTests
+cd backend
 mvn test
-```
-
-Run backend tests with coverage:
-
-Windows (PowerShell), macOS, and Linux:
-
-```bash
 mvn clean test jacoco:report
 ```
 
-Open JaCoCo HTML report:
+## AWS Deployment Guide (For People Who Fork This Repo)
 
-Windows (PowerShell):
+This section provides a full deployment path on AWS for a forked repository.
 
-```powershell
-start target/site/jacoco/index.html
-```
+### Deployment architecture (recommended)
 
-macOS:
+- EC2 (Ubuntu): runs backend service + Nginx
+- RDS PostgreSQL: managed database
+- Route 53 (optional): custom domain
+- TLS: Certbot/Let's Encrypt on EC2
 
-```bash
-open target/site/jacoco/index.html
-```
+This repo currently hardcodes API/WS localhost URLs in frontend files. You must update them for production before building frontend assets.
 
-Linux:
+### 0. AWS account setup prerequisites
 
-```bash
-xdg-open target/site/jacoco/index.html
-```
-
-Coverage artifacts:
-- HTML report: `backend/target/site/jacoco/index.html`
-- CSV report: `backend/target/site/jacoco/jacoco.csv`
-- Test reports: `backend/target/surefire-reports`
-
-#### Backend targeted coverage
-Target files:
-- U1: `backend/src/main/java/com/flowboard/service/ProjectService.java`
-- U2: `backend/src/main/java/com/flowboard/service/SummaryService.java`
-- U3: `backend/src/main/java/com/flowboard/service/ChangeApplicationService.java`
-
-Run from backend folder:
-
-Windows PowerShell:
-
-```powershell
-mvn "-Dtest=ProjectServiceTest,SummaryServiceTest,SummaryServiceUserStory2Test,ChangeApplicationServiceUserStory3Test" test jacoco:report
-```
-
-macOS/Linux (bash/zsh):
+1. Create an AWS account.
+2. Create an IAM user with programmatic access.
+3. Install and configure AWS CLI locally:
 
 ```bash
-mvn -Dtest=ProjectServiceTest,SummaryServiceTest,SummaryServiceUserStory2Test,ChangeApplicationServiceUserStory3Test test jacoco:report
+aws configure
 ```
 
-Print coverage for only those 3 backend files (PowerShell):
+4. Choose one AWS region and use it consistently (example: `us-east-1`).
 
-```powershell
-$csv = Import-Csv "target/site/jacoco/jacoco.csv"
-$targets = @("ProjectService", "SummaryService", "ChangeApplicationService")
-$csv |
-  Where-Object { $_.PACKAGE -eq "com.flowboard.service" -and $targets -contains $_.CLASS } |
-  ForEach-Object {
-    $miss = [double]$_.LINE_MISSED
-    $cov = [double]$_.LINE_COVERED
-    $pct = if (($miss + $cov) -gt 0) { [math]::Round((100 * $cov / ($miss + $cov)), 2) } else { 0 }
-    [PSCustomObject]@{ Class = $_.CLASS; LineCoveragePct = $pct }
-  } |
-  Format-Table -AutoSize
-```
+### 1. Create network and security groups
 
-Print coverage for only those 3 backend files (macOS/Linux shell):
+1. Use default VPC/subnets (or your own VPC).
+2. Create security group `trelloplus-ec2-sg`:
+- Inbound 22 from your IP only
+- Inbound 80 from `0.0.0.0/0`
+- Inbound 443 from `0.0.0.0/0`
+3. Create security group `trelloplus-rds-sg`:
+- Inbound 5432 from `trelloplus-ec2-sg` only
+
+### 2. Create RDS PostgreSQL
+
+1. AWS Console -> RDS -> Create database.
+2. Engine: PostgreSQL 16.
+3. DB instance class: start with `db.t4g.micro` (or larger for production).
+4. Set:
+- DB name: `flowboard`
+- Master username/password: choose secure values
+5. Attach `trelloplus-rds-sg` security group.
+6. Keep Public Access = `No`.
+7. After creation, copy the RDS endpoint.
+
+### 3. Launch EC2 instance
+
+1. Launch Ubuntu 22.04/24.04 instance.
+2. Instance size: at least `t3.medium`.
+3. Attach `trelloplus-ec2-sg`.
+4. Create/select an SSH key pair.
+5. Allocate and attach an Elastic IP.
+
+SSH into EC2:
 
 ```bash
-awk -F, 'BEGIN { OFS="," } NR==1 || ($2=="com/flowboard/service" && ($3=="ProjectService" || $3=="SummaryService" || $3=="ChangeApplicationService")) { print }' target/site/jacoco/jacoco.csv | \
-awk -F, 'NR==1 { next } { total=$8+$9; pct=(total>0)?(100*$9/total):0; printf "%s %.2f%%\n", $3, pct }'
+ssh -i <your-key.pem> ubuntu@<ec2-elastic-ip>
 ```
 
-Current backend results for these files:
-- U1 ProjectService.java: 98.05%
-- U2 SummaryService.java: 97.75%
-- U3 ChangeApplicationService.java: 96.77%
+### 4. Install runtime dependencies on EC2
 
-## 🤝 Contributing
+```bash
+sudo apt update
+sudo apt install -y git nginx maven openjdk-21-jdk nodejs npm
+java -version
+mvn -version
+node -v
+```
 
-This is a CS698 course project. For questions or contributions, please contact the development team.
+### 5. Clone your fork on EC2
 
-## 📄 License
+```bash
+cd /opt
+sudo git clone https://github.com/<your-username>/CS698_Project_TrelloPlus trelloplus
+sudo chown -R ubuntu:ubuntu /opt/trelloplus
+cd /opt/trelloplus
+```
 
-See project documentation for licensing information.
+### 6. Configure backend production environment
 
-## 🏆 Team
+Create backend env file:
 
-- **Luke Hill** - Lead Architect (Dev Spec 1)
-- **Vishesh Raju** - Developer (Dev Spec 2)
-- **Swechcha Ambati** - Software Engineer (Dev Spec 3)
+```bash
+cat > /opt/trelloplus/backend/.env.production <<'EOF'
+SPRING_PROFILES_ACTIVE=prod
+DB_URL=jdbc:postgresql://<rds-endpoint>:5432/flowboard
+DB_USERNAME=<rds-username>
+DB_PASSWORD=<rds-password>
+JWT_SECRET=<random-32-char-or-longer-secret>
+CORS_ALLOWED_ORIGINS=https://<your-domain-or-ec2-public-host>
+APP_LOG_LEVEL=INFO
+SECURITY_LOG_LEVEL=WARN
+OLLAMA_BASE_URL=http://<reachable-ollama-host>:11434
+OLLAMA_MODEL=qwen2.5:7b
+OLLAMA_TIMEOUT_SECONDS=30
+EOF
+```
 
+Important AI note:
+- AI features require a reachable Ollama endpoint.
+- If `OLLAMA_BASE_URL` is unreachable, AI generation APIs will return errors.
 
----
+### 7. Build and run backend as a systemd service
 
-**Version:** 0.0.1 | **Status:** In Development | **Last Updated:** March 2026
+Build jar:
+
+```bash
+cd /opt/trelloplus/backend
+mvn clean package -DskipTests
+```
+
+Create service file:
+
+```bash
+sudo tee /etc/systemd/system/trelloplus-backend.service > /dev/null <<'EOF'
+[Unit]
+Description=TrelloPlus Spring Boot Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/trelloplus/backend
+EnvironmentFile=/opt/trelloplus/backend/.env.production
+ExecStart=/usr/bin/java -jar /opt/trelloplus/backend/target/flowboard-backend-1.0.0.jar
+SuccessExitStatus=143
+Restart=always
+RestartSec=5
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Start service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable trelloplus-backend
+sudo systemctl start trelloplus-backend
+sudo systemctl status trelloplus-backend
+```
+
+### 8. Update frontend API and WebSocket endpoints for production
+
+This repository currently hardcodes localhost endpoints in frontend code.
+Before building frontend for AWS, update:
+
+- `src/app/services/api.ts`
+- `src/app/hooks/useWebSocketBoardUpdates.ts`
+- `src/app/hooks/useWebSocketProjectUpdates.ts`
+
+Set them to your production host, for example:
+- API base URL: `https://<your-domain>/api/v1`
+- WS endpoint: `https://<your-domain>/api/v1/ws/board`
+
+Then build frontend:
+
+```bash
+cd /opt/trelloplus
+npm install
+npm run build
+```
+
+### 9. Serve frontend and reverse proxy backend with Nginx
+
+Create Nginx site:
+
+```bash
+sudo tee /etc/nginx/sites-available/trelloplus > /dev/null <<'EOF'
+server {
+    listen 80;
+    server_name _;
+
+    root /opt/trelloplus/dist;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    location /api/v1/ws/board {
+        proxy_pass http://127.0.0.1:8080/api/v1/ws/board;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/v1/ {
+        proxy_pass http://127.0.0.1:8080/api/v1/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+```
+
+Enable and reload:
+
+```bash
+sudo ln -sf /etc/nginx/sites-available/trelloplus /etc/nginx/sites-enabled/trelloplus
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+At this point the app is reachable at `http://<ec2-elastic-ip>`.
+
+### 10. Add domain and HTTPS (recommended)
+
+1. In Route 53, create hosted zone for your domain.
+2. Add `A` record pointing to EC2 Elastic IP.
+3. Install Certbot on EC2:
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d <your-domain>
+```
+
+4. Confirm auto-renewal:
+
+```bash
+sudo systemctl status certbot.timer
+```
+
+5. Update `CORS_ALLOWED_ORIGINS` in `/opt/trelloplus/backend/.env.production` to your HTTPS domain and restart backend:
+
+```bash
+sudo systemctl restart trelloplus-backend
+```
+
+### 11. Verify deployment
+
+Run checks:
+
+```bash
+curl -I https://<your-domain>
+curl -I https://<your-domain>/api/v1/auth/login
+sudo systemctl status trelloplus-backend
+sudo systemctl status nginx
+```
+
+In browser:
+- Register/login works
+- Board CRUD works
+- Drag-drop updates persist
+- Real-time updates work in two tabs
+- Meeting summary and AI flows work (if Ollama endpoint is reachable)
+
+## Common Deployment Pitfalls
+
+- Frontend still pointing to localhost: update API/WS constants before `npm run build`.
+- CORS blocked: ensure `CORS_ALLOWED_ORIGINS` exactly matches your frontend origin.
+- WebSocket fails behind Nginx: confirm `Upgrade` and `Connection` headers in Nginx config.
+- Backend cannot connect to DB: verify RDS SG allows 5432 from EC2 SG.
+- AI features fail: check `OLLAMA_BASE_URL` reachability and model availability.
+
+## Useful Commands
+
+### Frontend
+
+```bash
+npm run dev
+npm run build
+npm test
+npm run test:coverage
+```
+
+### Backend
+
+```bash
+cd backend
+mvn spring-boot:run
+mvn test
+```
+
+## Documentation
+
+- `SETUP_GUIDE.md`
+- `docs/dev_spec_1.md`
+- `docs/dev_spec_2.md`
+- `docs/dev_spec_3.md`
+- `ACCESSIBILITY_COMPLIANCE.md`
+- `ATTRIBUTIONS.md`
+
+## Team
+- Swechcha Ambati
+- Luke Hill
+- Vishesh Raju
+

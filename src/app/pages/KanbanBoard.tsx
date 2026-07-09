@@ -204,7 +204,7 @@ export function KanbanBoard() {
     <DndProvider backend={HTML5Backend}>
       <div className="h-full flex flex-col bg-gray-50 pt-16">
         {/* Kanban Board */}
-        <div className="flex-1 overflow-x-auto p-3 md:p-6">
+        <div className="flex-1 overflow-auto p-3 md:p-6">
           <div className="flex gap-3 md:gap-4 h-full min-w-max pb-4">
             {project.columns.map((column) => (
               <KanbanColumn

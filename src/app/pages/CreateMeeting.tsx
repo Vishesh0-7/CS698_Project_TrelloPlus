@@ -9,6 +9,7 @@ import { Checkbox } from '../components/ui/checkbox';
 import { ArrowLeft, Calendar, Clock, Users, FileText, Link as LinkIcon, Video, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiService, type ProjectResponse } from '../services/api';
+import { convertLocalToUTC } from '../utils/timezoneUtils';
 
 interface ProjectMember {
   id: string;
@@ -128,12 +129,20 @@ export function CreateMeeting() {
     }
 
     try {
+      // Convert local time to UTC for storage
+      const utcIsoString = convertLocalToUTC(date, time);
+      const utcDate = new Date(utcIsoString);
+
+      // Extract UTC date and time components
+      const utcDateStr = utcDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      const utcTimeStr = utcDate.toISOString().split('T')[1].slice(0, 8); // HH:mm:ss
+
       await apiService.createMeeting({
         projectId: selectedProjectId,
         title: title.trim(),
         description: agenda.trim(),
-        meetingDate: date,
-        meetingTime: `${time}:00`,
+        meetingDate: utcDateStr,
+        meetingTime: utcTimeStr,
         platform: platform.trim() || undefined,
         meetingLink: link.trim() || undefined,
         additionalMemberIds: selectedMemberIds.length > 0 ? selectedMemberIds : undefined,

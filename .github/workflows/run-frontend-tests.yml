@@ -1,13 +1,8 @@
 name: Run Frontend Tests
 
 on:
-  push:
-    branches:
-      - main
-      - master
-      - develop
-      - test_specifications
-  pull_request:
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   frontend-tests:

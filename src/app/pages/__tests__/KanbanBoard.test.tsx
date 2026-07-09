@@ -1,9 +1,6 @@
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BrowserRouter } from 'react-router-dom';
-import { KanbanBoard } from '../KanbanBoard';
-import * as api from '../../services/api';
-import * as projectStore from '../../store/projectStore';
 import { toast } from 'sonner';
 
 // Handler capture storage
@@ -76,6 +73,10 @@ jest.mock('../../components/CreateTaskModal', () => ({
 
 jest.mock('../../services/api');
 jest.mock('../../store/projectStore');
+
+const { KanbanBoard } = jest.requireActual('../KanbanBoard');
+const api = jest.requireMock('../../services/api');
+const projectStore = jest.requireMock('../../store/projectStore');
 
 // Mock fixtures
 const mockProject = {

@@ -9,7 +9,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:frontend:concurrency": "node scripts/playwright_frontend_login_10.mjs"
+    "test:frontend:concurrency": "node scripts/playwright_frontend_login_10.mjs",
+    "test:integration:fullstack": "node scripts/playwright_fullstack_integration.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

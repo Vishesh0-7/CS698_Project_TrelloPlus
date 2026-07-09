@@ -1,10 +1,6 @@
 package com.flowboard.controller;
 
-import com.flowboard.dto.AuthResponse;
-import com.flowboard.dto.LoginRequest;
-import com.flowboard.dto.RegisterRequest;
-import com.flowboard.dto.UpdateUserProfileRequest;
-import com.flowboard.dto.UserDTO;
+import com.flowboard.dto.*;
 import com.flowboard.service.AuthService;
 import com.flowboard.service.JWTService;
 import com.flowboard.service.RateLimitService;
@@ -24,7 +20,6 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
-@CrossOrigin(originPatterns = "http://localhost:*")
 public class AuthController {
     private final AuthService authService;
     private final JWTService jwtService;
@@ -41,6 +36,30 @@ public class AuthController {
 
     @Value("${app.rate-limit.auth.login.window-minutes:15}")
     private int loginWindowMinutes;
+
+    @Value("${app.rate-limit.auth.security-questions.setup.max-attempts:5}")
+    private int securityQuestionSetupMaxAttempts;
+
+    @Value("${app.rate-limit.auth.security-questions.setup.window-minutes:15}")
+    private int securityQuestionSetupWindowMinutes;
+
+    @Value("${app.rate-limit.auth.security-questions.lookup.max-attempts:10}")
+    private int securityQuestionLookupMaxAttempts;
+
+    @Value("${app.rate-limit.auth.security-questions.lookup.window-minutes:15}")
+    private int securityQuestionLookupWindowMinutes;
+
+    @Value("${app.rate-limit.auth.forgot-password.validate.max-attempts:5}")
+    private int forgotPasswordValidateMaxAttempts;
+
+    @Value("${app.rate-limit.auth.forgot-password.validate.window-minutes:15}")
+    private int forgotPasswordValidateWindowMinutes;
+
+    @Value("${app.rate-limit.auth.forgot-password.reset.max-attempts:5}")
+    private int resetPasswordMaxAttempts;
+
+    @Value("${app.rate-limit.auth.forgot-password.reset.window-minutes:15}")
+    private int resetPasswordWindowMinutes;
 
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(
@@ -108,5 +127,89 @@ public class AuthController {
         @Valid @RequestBody UpdateUserProfileRequest request) {
         UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
         return ResponseEntity.ok(authService.updateUserProfile(userId.toString(), request));
+    }
+
+    @PostMapping("/security-questions")
+    public ResponseEntity<Void> setSecurityQuestions(
+        @RequestHeader("Authorization") String authHeader,
+        @Valid @RequestBody SetSecurityQuestionsRequest request) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        rateLimitService.check(
+            "security-questions:setup:user:" + userId,
+            securityQuestionSetupMaxAttempts,
+            Duration.ofMinutes(securityQuestionSetupWindowMinutes),
+            "Too many security question updates. Please wait and try again later."
+        );
+        authService.setSecurityQuestions(userId.toString(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/security-questions/me")
+    public ResponseEntity<java.util.Map<String, Object>> getMySecurityQuestions(
+        @RequestHeader("Authorization") String authHeader) {
+        UUID userId = jwtService.extractUserIdFromAuthHeader(authHeader);
+        return ResponseEntity.ok(authService.getSecurityQuestionsForUserId(userId.toString()));
+    }
+
+    @GetMapping("/security-questions/{email}")
+    public ResponseEntity<java.util.Map<String, Object>> getSecurityQuestions(
+        @PathVariable String email,
+        HttpServletRequest httpRequest) {
+        String normalizedEmail = email.trim().toLowerCase();
+        Duration lookupWindow = Duration.ofMinutes(securityQuestionLookupWindowMinutes);
+        rateLimitService.check(
+            "security-questions:lookup:ip:" + httpRequest.getRemoteAddr(),
+            securityQuestionLookupMaxAttempts,
+            lookupWindow,
+            "Too many password recovery lookups. Please wait and try again later."
+        );
+        rateLimitService.check(
+            "security-questions:lookup:email:" + normalizedEmail,
+            securityQuestionLookupMaxAttempts,
+            lookupWindow,
+            "Too many password recovery lookups for this account. Please wait and try again later."
+        );
+        return ResponseEntity.ok(authService.getSecurityQuestionsForUser(email));
+    }
+
+    @PostMapping("/forgot-password/validate")
+    public ResponseEntity<PasswordResetTokenResponse> validateSecurityAnswers(
+        @Valid @RequestBody ValidateSecurityAnswersRequest request,
+        HttpServletRequest httpRequest) {
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        Duration validationWindow = Duration.ofMinutes(forgotPasswordValidateWindowMinutes);
+        rateLimitService.check(
+            "forgot-password:ip:" + httpRequest.getRemoteAddr(),
+            forgotPasswordValidateMaxAttempts,
+            validationWindow,
+            "Too many password reset attempts. Please try again later."
+        );
+        rateLimitService.check(
+            "forgot-password:email:" + normalizedEmail,
+            forgotPasswordValidateMaxAttempts,
+            validationWindow,
+            "Too many password reset attempts for this account. Please try again later."
+        );
+        return ResponseEntity.ok(authService.validateSecurityAnswers(request));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPassword(
+        @Valid @RequestBody ResetPasswordRequest request,
+        HttpServletRequest httpRequest) {
+        rateLimitService.check(
+            "reset-password:ip:" + httpRequest.getRemoteAddr(),
+            resetPasswordMaxAttempts,
+            Duration.ofMinutes(resetPasswordWindowMinutes),
+            "Too many password reset submissions. Please try again later."
+        );
+        rateLimitService.check(
+            "reset-password:token:" + request.getResetToken(),
+            resetPasswordMaxAttempts,
+            Duration.ofMinutes(resetPasswordWindowMinutes),
+            "Too many password reset submissions for this token. Please try again later."
+        );
+        authService.resetPasswordWithToken(request);
+        return ResponseEntity.noContent().build();
     }
 }
